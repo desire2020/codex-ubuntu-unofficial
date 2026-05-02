@@ -374,6 +374,13 @@ const I18N = {
     "code.noOutput": "No output",
     "code.line": "1 line",
     "code.lines": "{count} lines",
+    "reasoning.title": "Thinking",
+    "reasoning.inProgress": "Thinking",
+    "reasoning.waiting": "Preparing reasoning summary...",
+    "reasoning.note": "1 note",
+    "reasoning.notes": "{count} notes",
+    "reasoning.noNotes": "No summary",
+    "reasoning.none": "No readable reasoning summary was emitted.",
     "age.minute": "{count}m",
     "age.hour": "{count}h",
     "age.day": "{count}d",
@@ -600,6 +607,13 @@ const I18N = {
     "code.noOutput": "没有输出",
     "code.line": "1 行",
     "code.lines": "{count} 行",
+    "reasoning.title": "思考过程",
+    "reasoning.inProgress": "正在推理",
+    "reasoning.waiting": "正在准备推理摘要...",
+    "reasoning.note": "1 条摘要",
+    "reasoning.notes": "{count} 条摘要",
+    "reasoning.noNotes": "无摘要",
+    "reasoning.none": "没有收到可读推理摘要。",
     "age.minute": "{count} 分钟",
     "age.hour": "{count} 小时",
     "age.day": "{count} 天",
@@ -1818,7 +1832,46 @@ function renderMessageBody(message) {
   if (message.role === "tool") {
     return renderFoldableBlock(message.title || t("code.output"), message.text || "", message.kind || "tool", false);
   }
+  if (message.role === "reasoning") {
+    return renderReasoningMessage(message);
+  }
   return renderMarkdown(message.text || "");
+}
+
+function renderReasoningMessage(message) {
+  const summary = normalizedTextArray(message.summary);
+  const visibleSummary = summary.filter((part) => part.trim());
+  const isInProgress = message.status !== "completed";
+  const open = message.open ?? isInProgress;
+  const meta = isInProgress
+    ? t("reasoning.inProgress")
+    : visibleSummary.length === 0
+      ? t("reasoning.noNotes")
+      : visibleSummary.length === 1
+        ? t("reasoning.note")
+        : t("reasoning.notes", { count: visibleSummary.length });
+  const body = visibleSummary.length
+    ? visibleSummary.map(renderReasoningPart).join("")
+    : `<p class="reasoning-empty">${escapeHtml(isInProgress ? t("reasoning.waiting") : t("reasoning.none"))}</p>`;
+
+  return `
+    <details class="foldable-block reasoning ${isInProgress ? "is-live" : "is-completed"}" data-reasoning-id="${escapeHtml(message.itemId || "")}" ${open ? "open" : ""}>
+      <summary>
+        <span class="fold-label">
+          <span class="reasoning-pulse" aria-hidden="true"></span>
+          ${escapeHtml(t("reasoning.title"))}
+        </span>
+        <span class="fold-meta">${escapeHtml(meta)}</span>
+      </summary>
+      <div class="reasoning-body">
+        ${body}
+      </div>
+    </details>
+  `;
+}
+
+function renderReasoningPart(text) {
+  return `<section class="reasoning-part">${renderMarkdown(text)}</section>`;
 }
 
 function renderMarkdown(text) {
@@ -1953,6 +2006,24 @@ function countBlockLines(text) {
 
 function stripTrailingNewline(text) {
   return String(text || "").replace(/\r?\n$/, "");
+}
+
+function normalizedTextArray(value) {
+  if (Array.isArray(value)) {
+    return value.map((part) => String(part || ""));
+  }
+  if (typeof value === "string") {
+    return [value];
+  }
+  return [];
+}
+
+function ensureTextArrayIndex(parts, index) {
+  const safeIndex = Math.max(0, Number(index) || 0);
+  while (parts.length <= safeIndex) {
+    parts.push("");
+  }
+  return safeIndex;
 }
 
 function cssToken(value) {
@@ -2108,6 +2179,8 @@ function threadToMessages(thread) {
         messages.push({ role: "user", text: item.content.map(inputToText).join("\n") });
       } else if (item.type === "agentMessage") {
         messages.push({ role: "assistant", text: item.text });
+      } else if (item.type === "reasoning") {
+        messages.push(reasoningMessageFromItem(item, "completed"));
       } else if (item.type === "commandExecution") {
         messages.push({
           role: "tool",
@@ -2150,6 +2223,50 @@ function appendMessage(role, text, extra = {}) {
   const message = { role, text, ...extra };
   state.messages.push(message);
   renderConversation();
+  return message;
+}
+
+function reasoningMessageFromItem(item, status = "inProgress") {
+  return {
+    role: "reasoning",
+    itemId: item.id,
+    summary: normalizedTextArray(item.summary),
+    content: normalizedTextArray(item.content),
+    status,
+    open: status !== "completed",
+    userToggled: false,
+  };
+}
+
+function ensureReasoningMessage(itemId, item = null) {
+  let message = findStreamingMessage(itemId);
+  if (!message) {
+    message = reasoningMessageFromItem(
+      item || {
+        id: itemId,
+        summary: [],
+        content: [],
+      },
+    );
+    state.messages.push(message);
+    return message;
+  }
+
+  if (message.role !== "reasoning") {
+    message.role = "reasoning";
+  }
+  if (!Array.isArray(message.summary)) {
+    message.summary = normalizedTextArray(message.summary);
+  }
+  if (!Array.isArray(message.content)) {
+    message.content = normalizedTextArray(message.content);
+  }
+  if (item) {
+    message.summary = normalizedTextArray(item.summary);
+    message.content = normalizedTextArray(item.content);
+  }
+  message.status = message.status || "inProgress";
+  message.open ??= message.status !== "completed";
   return message;
 }
 
@@ -2237,12 +2354,31 @@ window.codexDesktop.onEvent(({ method, params }) => {
     renderHeader();
   } else if (method === "turn/started") {
     state.currentTurnId = params.turn.id;
+  } else if (method === "item/started") {
+    if (params.item?.type === "reasoning") {
+      ensureReasoningMessage(params.item.id, params.item);
+      renderConversation();
+    }
   } else if (method === "item/agentMessage/delta") {
     let message = findStreamingMessage(params.itemId);
     if (!message) {
       message = appendMessage("assistant", "", { itemId: params.itemId });
     }
     message.text += params.delta;
+    renderConversation();
+  } else if (method === "item/reasoning/summaryPartAdded") {
+    const message = ensureReasoningMessage(params.itemId);
+    ensureTextArrayIndex(message.summary, params.summaryIndex);
+    renderConversation();
+  } else if (method === "item/reasoning/summaryTextDelta") {
+    const message = ensureReasoningMessage(params.itemId);
+    const index = ensureTextArrayIndex(message.summary, params.summaryIndex);
+    message.summary[index] += params.delta || "";
+    renderConversation();
+  } else if (method === "item/reasoning/textDelta") {
+    const message = ensureReasoningMessage(params.itemId);
+    const index = ensureTextArrayIndex(message.content, params.contentIndex);
+    message.content[index] += params.delta || "";
     renderConversation();
   } else if (method === "item/completed") {
     handleCompletedItem(params.item);
@@ -2275,6 +2411,12 @@ function handleCompletedItem(item) {
       message.text = item.text;
     } else {
       appendMessage("assistant", item.text, { itemId: item.id });
+    }
+  } else if (item.type === "reasoning") {
+    const message = ensureReasoningMessage(item.id, item);
+    message.status = "completed";
+    if (!message.userToggled) {
+      message.open = false;
     }
   } else if (item.type === "commandExecution") {
     appendMessage("tool", item.aggregatedOutput || item.status || "", {
@@ -2667,6 +2809,21 @@ els.conversation.addEventListener("click", async (event) => {
   }
   window.codexDesktop.openExternal(href);
 });
+els.conversation.addEventListener(
+  "toggle",
+  (event) => {
+    const details = event.target.closest?.(".foldable-block.reasoning[data-reasoning-id]");
+    if (!details) {
+      return;
+    }
+    const message = findStreamingMessage(details.dataset.reasoningId);
+    if (message) {
+      message.open = details.open;
+      message.userToggled = true;
+    }
+  },
+  true,
+);
 els.modelChoice.addEventListener("click", (event) => {
   event.stopPropagation();
   els.modelMenu.classList.toggle("hidden");

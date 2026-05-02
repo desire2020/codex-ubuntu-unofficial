@@ -439,6 +439,14 @@ button {
   color: var(--muted);
 }
 
+.message.reasoning .bubble {
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
 .plain-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -653,6 +661,58 @@ button {
   border-color: rgba(139, 185, 255, 0.18);
 }
 
+.foldable-block.reasoning {
+  border-color: rgba(139, 185, 255, 0.16);
+  background: rgba(22, 26, 32, 0.46);
+}
+
+.foldable-block.reasoning summary {
+  color: #cbd6e8;
+}
+
+.foldable-block.reasoning .fold-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.reasoning-pulse {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--blue);
+  box-shadow: 0 0 0 0 rgba(139, 185, 255, 0.34);
+  animation: reasoning-pulse 1.6s ease-out infinite;
+}
+
+.foldable-block.reasoning:not(.is-live) .reasoning-pulse,
+.foldable-block.reasoning:not([open]) .reasoning-pulse {
+  animation: none;
+  opacity: 0.65;
+}
+
+.reasoning-body {
+  padding: 12px;
+}
+
+.reasoning-part + .reasoning-part {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.reasoning-body .markdown-body {
+  color: #c9d1dc;
+}
+
+.reasoning-empty {
+  margin: 0;
+  color: var(--subtle);
+}
+
 .foldable-block.code,
 .code-block {
   border-color: rgba(255, 255, 255, 0.12);
@@ -681,6 +741,20 @@ button {
 
 .foldable-block.error {
   border-color: rgba(225, 91, 100, 0.32);
+}
+
+@keyframes reasoning-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(139, 185, 255, 0.34);
+  }
+
+  70% {
+    box-shadow: 0 0 0 8px rgba(139, 185, 255, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(139, 185, 255, 0);
+  }
 }
 
 .change-card {

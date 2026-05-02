@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
 
-const APP_VERSION = "0.1.22";
+const APP_VERSION = "0.1.23";
 const CLIENT_INFO = {
   name: "codex_ubuntu_desktop",
   title: "Codex Ubuntu Desktop",

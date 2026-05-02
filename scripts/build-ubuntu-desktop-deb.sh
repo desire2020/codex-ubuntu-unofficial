@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 pkg="codex-desktop-ubuntu"
-version="0.1.22+ubuntu.1"
+version="0.1.23+ubuntu.1"
 arch="$(dpkg --print-architecture)"
 root="$repo_root/dist/deb-root"
 out="$repo_root/dist/${pkg}_${version}_${arch}.deb"
