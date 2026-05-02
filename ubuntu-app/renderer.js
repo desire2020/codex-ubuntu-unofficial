@@ -44,18 +44,30 @@ const state = {
   configError: "",
   configSaveMessage: "",
   queuedFollowUps: [],
+  optimisticThreads: [],
+  draftThreadId: null,
+  editingTurn: null,
 };
 
 let markdownRenderer;
+let conversationRenderScheduled = false;
+let conversationRenderShouldStick = false;
 
 const els = {
   branchName: document.getElementById("branchName"),
+  commitButton: document.getElementById("commitButton"),
+  commitMenu: document.getElementById("commitMenu"),
   conversation: document.getElementById("conversation"),
   contextMenu: document.getElementById("contextMenu"),
   diffViewer: document.getElementById("diffViewer"),
   emptyState: document.getElementById("emptyState"),
   emptySubtitle: document.getElementById("emptySubtitle"),
   emptyTitle: document.getElementById("emptyTitle"),
+  editTurnHelp: document.getElementById("editTurnHelp"),
+  editTurnModal: document.getElementById("editTurnModal"),
+  editTurnStatus: document.getElementById("editTurnStatus"),
+  editTurnText: document.getElementById("editTurnText"),
+  editTurnTitle: document.getElementById("editTurnTitle"),
   effortButtons: document.getElementById("effortButtons"),
   fileCount: document.getElementById("fileCount"),
   fileSummary: document.getElementById("fileSummary"),
@@ -363,7 +375,18 @@ const I18N = {
     "config.managed": "managed config",
     "config.managedPrefs": "managed preferences",
     "change.filesChanged": "{count} files changed",
+    "change.noChanges": "No file changes",
+    "change.moreFiles": "{count} more files",
     "change.undo": "Undo",
+    "message.copy": "Copy this message",
+    "message.editRegenerate": "Edit and regenerate from here",
+    "editTurn.title": "Edit and regenerate",
+    "editTurn.help": "Rollback to this turn, edit the user input, and run Codex again.",
+    "editTurn.cancel": "Cancel",
+    "editTurn.regenerate": "Regenerate",
+    "editTurn.waitForTurn": "Wait for the current turn to finish before regenerating.",
+    "editTurn.empty": "Enter a prompt to regenerate from this turn.",
+    "editTurn.failed": "Regenerate failed: {error}",
     "code.copy": "Copy",
     "code.copied": "Copied",
     "code.code": "Code",
@@ -377,6 +400,7 @@ const I18N = {
     "reasoning.title": "Thinking",
     "reasoning.inProgress": "Thinking",
     "reasoning.waiting": "Preparing reasoning summary...",
+    "reasoning.active": "Codex is working...",
     "reasoning.note": "1 note",
     "reasoning.notes": "{count} notes",
     "reasoning.noNotes": "No summary",
@@ -596,7 +620,18 @@ const I18N = {
     "config.managed": "托管配置",
     "config.managedPrefs": "托管偏好",
     "change.filesChanged": "{count} 个文件已更改",
+    "change.noChanges": "没有文件更改",
+    "change.moreFiles": "还有 {count} 个文件",
     "change.undo": "撤销",
+    "message.copy": "复制本条内容",
+    "message.editRegenerate": "从这里编辑并重新生成",
+    "editTurn.title": "编辑并重新生成",
+    "editTurn.help": "回退到这个 turn，编辑用户输入，然后让 Codex 重新运行。",
+    "editTurn.cancel": "取消",
+    "editTurn.regenerate": "重新生成",
+    "editTurn.waitForTurn": "请等待当前 turn 结束后再重新生成。",
+    "editTurn.empty": "请输入用于重新生成的提示词。",
+    "editTurn.failed": "重新生成失败：{error}",
     "code.copy": "复制",
     "code.copied": "已复制",
     "code.code": "代码",
@@ -610,6 +645,7 @@ const I18N = {
     "reasoning.title": "思考过程",
     "reasoning.inProgress": "正在推理",
     "reasoning.waiting": "正在准备推理摘要...",
+    "reasoning.active": "Codex 正在工作...",
     "reasoning.note": "1 条摘要",
     "reasoning.notes": "{count} 条摘要",
     "reasoning.noNotes": "无摘要",
@@ -630,7 +666,7 @@ const STATIC_TEXT = [
   [".projects-section .section-label", "sidebar.projects"],
   [".chats-section .section-label", "sidebar.chats"],
   ["#settingsButton span:last-child", "sidebar.settings"],
-  [".commit-button span:last-child", "top.commit"],
+  [".commit-label", "top.commit"],
   ["#declineApproval", "approval.decline"],
   ["#acceptApproval", "approval.approve"],
   ["#startReview span:last-child", "review.review"],
@@ -742,6 +778,7 @@ const STATIC_ATTRS = [
   ["#openReview", "aria-label", "review.openDetails"],
   ["#closeAuth", "aria-label", "review.closeDetails"],
   ["#settingsModal", "aria-label", "settings.title"],
+  ["#commitButton", "aria-label", "top.commit"],
   [".settings-tabs", "aria-label", "settings.sections"],
   ["#closeSettings", "aria-label", "review.closeDetails"],
   ["#settingsCustomInstructions", "placeholder", "settings.customInstructionsPlaceholder"],
@@ -826,8 +863,60 @@ function renderAll() {
   renderConversation();
   renderGit();
   renderSettings();
+  renderEditTurnDialog();
   renderAuth();
   renderReviewVisibility();
+}
+
+function normalizeThreadForList(thread) {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    ...thread,
+    preview: thread.preview || thread.name || t("nav.newChat"),
+    createdAt: thread.createdAt || now,
+    updatedAt: thread.updatedAt || thread.createdAt || now,
+  };
+}
+
+function upsertThread(thread, { optimistic = false } = {}) {
+  if (!thread?.id) {
+    return;
+  }
+  const normalized = normalizeThreadForList(thread);
+  state.threads = [normalized, ...state.threads.filter((item) => item.id !== normalized.id)];
+  if (optimistic) {
+    state.optimisticThreads = [normalized, ...state.optimisticThreads.filter((item) => item.id !== normalized.id)];
+  }
+}
+
+function mergeOptimisticThreads(threads) {
+  const serverThreads = Array.isArray(threads) ? threads : [];
+  const serverIds = new Set(serverThreads.map((thread) => thread.id));
+  const pending = state.optimisticThreads.filter((thread) => !serverIds.has(thread.id) && threadBelongsToWorkspace(thread));
+  state.optimisticThreads = pending;
+  return [...pending, ...serverThreads];
+}
+
+function normalizedWorkspacePath(value) {
+  return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function threadBelongsToWorkspace(thread) {
+  if (!thread?.cwd || !state.workspace || state.workspaceIsFallback) {
+    return true;
+  }
+  return normalizedWorkspacePath(thread.cwd) === normalizedWorkspacePath(state.workspace);
+}
+
+function resetActiveThreadForWorkspaceSwitch(workspace) {
+  state.workspace = workspace;
+  state.currentThread = null;
+  state.currentTurnId = null;
+  state.draftThreadId = null;
+  state.threadTitle = "";
+  state.messages = [];
+  state.queuedFollowUps = [];
+  state.optimisticThreads = [];
 }
 
 function renderSidebar() {
@@ -850,8 +939,10 @@ function renderSidebar() {
 
   document.querySelectorAll("[data-thread]").forEach((button) => {
     button.addEventListener("click", async () => {
+      await discardEmptyDraftThreadIfNeeded(button.dataset.thread);
       const thread = await window.codexDesktop.resumeThread(button.dataset.thread);
       state.currentThread = thread;
+      state.draftThreadId = null;
       state.messages = threadToMessages(thread);
       state.threadTitle = thread.name || thread.preview || "Codex";
       renderAll();
@@ -865,9 +956,10 @@ function renderSidebar() {
   });
   document.querySelectorAll("[data-project]").forEach((button) => {
     button.addEventListener("click", async () => {
+      await discardEmptyDraftThreadIfNeeded();
       const workspace = await window.codexDesktop.openWorkspace(button.dataset.project);
       if (workspace) {
-        state.workspace = workspace;
+        resetActiveThreadForWorkspaceSwitch(workspace);
         await refreshState();
       }
     });
@@ -878,6 +970,35 @@ function renderSidebar() {
       }
     });
   });
+}
+
+function removeThreadFromLocalLists(threadId) {
+  state.threads = state.threads.filter((thread) => thread.id !== threadId);
+  state.optimisticThreads = state.optimisticThreads.filter((thread) => thread.id !== threadId);
+}
+
+async function discardEmptyDraftThreadIfNeeded(nextThreadId = null) {
+  const draftThreadId = state.draftThreadId;
+  if (
+    !draftThreadId ||
+    draftThreadId === nextThreadId ||
+    state.currentThread?.id !== draftThreadId ||
+    state.currentTurnId ||
+    state.messages.length > 0 ||
+    els.prompt.value.trim()
+  ) {
+    return false;
+  }
+
+  state.draftThreadId = null;
+  removeThreadFromLocalLists(draftThreadId);
+  renderSidebar();
+  try {
+    await window.codexDesktop.archiveThread(draftThreadId);
+  } catch (error) {
+    els.serverStatus.textContent = error.message;
+  }
+  return true;
 }
 
 function pinnedThreadIds() {
@@ -1645,7 +1766,10 @@ async function archiveThread(threadId) {
   try {
     await window.codexDesktop.archiveThread(threadId);
     const pinnedThreadIdsNext = pinnedThreadIds().filter((id) => id !== threadId);
-    state.threads = state.threads.filter((thread) => thread.id !== threadId);
+    removeThreadFromLocalLists(threadId);
+    if (state.draftThreadId === threadId) {
+      state.draftThreadId = null;
+    }
     if (state.currentThread?.id === threadId) {
       state.currentThread = null;
       state.messages = [];
@@ -1750,9 +1874,10 @@ function sameConfigValue(left, right) {
 }
 
 async function chooseWorkspace() {
+  await discardEmptyDraftThreadIfNeeded();
   const workspace = await window.codexDesktop.chooseWorkspace();
   if (workspace) {
-    state.workspace = workspace;
+    resetActiveThreadForWorkspaceSwitch(workspace);
     await refreshState();
   }
 }
@@ -1790,42 +1915,36 @@ function scrollConversationToBottom() {
   });
 }
 
-function renderConversation() {
+function scheduleConversationRender({ stickToBottom = true } = {}) {
+  conversationRenderShouldStick ||= stickToBottom && isConversationNearBottom();
+  if (conversationRenderScheduled) {
+    return;
+  }
+  conversationRenderScheduled = true;
+  requestAnimationFrame(() => {
+    conversationRenderScheduled = false;
+    const forceBottom = conversationRenderShouldStick;
+    conversationRenderShouldStick = false;
+    renderConversation({ forceBottom });
+  });
+}
+
+function renderConversation({ forceBottom = true } = {}) {
   els.emptyState.classList.toggle("hidden", state.messages.length > 0);
   els.shell.classList.toggle("is-empty", state.messages.length === 0);
   const html = state.messages.map(renderMessage).join("");
 
-  const changeCard = state.git.files.length
-    ? `
-      <section class="change-card">
-        <div class="change-card-header">
-          <span>${escapeHtml(t("change.filesChanged", { count: state.git.totals.files }))} <span class="added">+${state.git.totals.added}</span> <span class="deleted">-${state.git.totals.deleted}</span></span>
-          <span>${escapeHtml(t("change.undo"))}</span>
-        </div>
-        ${state.git.files
-          .slice(0, 6)
-          .map(
-            (file) => `
-              <div class="change-row">
-                <span class="path">${escapeHtml(file.path)}</span>
-                <span class="added">+${file.added}</span>
-                <span class="deleted">-${file.deleted}</span>
-              </div>
-            `,
-          )
-          .join("")}
-      </section>
-    `
-    : "";
-
-  els.conversation.innerHTML = `${els.emptyState.outerHTML}${html}${changeCard}`;
-  els.conversation.scrollTop = els.conversation.scrollHeight;
+  els.conversation.innerHTML = `${els.emptyState.outerHTML}${html}`;
+  if (forceBottom) {
+    els.conversation.scrollTop = els.conversation.scrollHeight;
+  }
 }
 
-function renderMessage(message) {
+function renderMessage(message, index) {
   const role = message.role || "assistant";
   const kind = message.kind ? ` ${cssToken(message.kind)}` : "";
-  return `<article class="message ${cssToken(role)}${kind}"><div class="bubble">${renderMessageBody(message)}</div></article>`;
+  const actions = role === "user" ? renderUserMessageActions(message, index) : "";
+  return `<article class="message ${cssToken(role)}${kind}" data-message-index="${index}"><div class="bubble">${renderMessageBody(message)}${actions}</div></article>`;
 }
 
 function renderMessageBody(message) {
@@ -1838,20 +1957,36 @@ function renderMessageBody(message) {
   return renderMarkdown(message.text || "");
 }
 
+function renderUserMessageActions(message, index) {
+  const canEdit = Number.isInteger(message.turnIndex) && !state.currentTurnId;
+  return `
+    <div class="message-actions">
+      <button type="button" class="message-action" data-user-action="copy" data-message-index="${index}" aria-label="${escapeHtml(t("message.copy"))}" title="${escapeHtml(t("message.copy"))}">
+        <span class="icon copy"></span>
+      </button>
+      <button type="button" class="message-action" data-user-action="edit" data-message-index="${index}" aria-label="${escapeHtml(t("message.editRegenerate"))}" title="${escapeHtml(t("message.editRegenerate"))}" ${canEdit ? "" : "disabled"}>
+        <span class="icon pen"></span>
+      </button>
+    </div>
+  `;
+}
+
 function renderReasoningMessage(message) {
   const summary = normalizedTextArray(message.summary);
   const visibleSummary = summary.filter((part) => part.trim());
   const isInProgress = message.status !== "completed";
   const open = message.open ?? isInProgress;
   const meta = isInProgress
-    ? t("reasoning.inProgress")
+    ? visibleSummary.length
+      ? t("reasoning.inProgress")
+      : t("reasoning.active")
     : visibleSummary.length === 0
       ? t("reasoning.noNotes")
       : visibleSummary.length === 1
         ? t("reasoning.note")
         : t("reasoning.notes", { count: visibleSummary.length });
   const body = visibleSummary.length
-    ? visibleSummary.map(renderReasoningPart).join("")
+    ? visibleSummary.map((part) => renderReasoningPart(part, isInProgress)).join("")
     : `<p class="reasoning-empty">${escapeHtml(isInProgress ? t("reasoning.waiting") : t("reasoning.none"))}</p>`;
 
   return `
@@ -1870,8 +2005,9 @@ function renderReasoningMessage(message) {
   `;
 }
 
-function renderReasoningPart(text) {
-  return `<section class="reasoning-part">${renderMarkdown(text)}</section>`;
+function renderReasoningPart(text, isInProgress) {
+  const body = isInProgress ? `<div class="plain-text reasoning-stream">${escapeHtml(text)}</div>` : renderMarkdown(text);
+  return `<section class="reasoning-part">${body}</section>`;
 }
 
 function renderMarkdown(text) {
@@ -2035,6 +2171,7 @@ function renderGit() {
   els.fileCount.textContent = totals.files;
   els.topAdded.textContent = `+${totals.added}`;
   els.topDeleted.textContent = `-${totals.deleted}`;
+  renderCommitMenu();
   if (state.fileDetail) {
     renderFileDetail();
     return;
@@ -2052,6 +2189,39 @@ function renderGit() {
     )
     .join("");
   els.diffViewer.innerHTML = renderDiff(state.git.diff || "");
+}
+
+function renderCommitMenu() {
+  if (!els.commitMenu || !els.commitButton) {
+    return;
+  }
+  const files = state.git.files || [];
+  const totals = state.git.totals || { files: 0, added: 0, deleted: 0 };
+  els.commitButton.classList.toggle("has-changes", files.length > 0);
+  if (!files.length) {
+    els.commitMenu.innerHTML = `<div class="commit-empty">${escapeHtml(t("change.noChanges"))}</div>`;
+    return;
+  }
+  els.commitMenu.innerHTML = `
+    <div class="commit-menu-header">
+      <span>${escapeHtml(t("change.filesChanged", { count: totals.files }))}</span>
+      <span><span class="added">+${totals.added}</span> <span class="deleted">-${totals.deleted}</span></span>
+    </div>
+    <div class="commit-menu-list">
+      ${files
+        .map(
+          (file) => `
+            <div class="commit-row">
+              <span class="status">${escapeHtml(file.status || "M")}</span>
+              <span class="path">${escapeHtml(file.path)}</span>
+              <span class="added">+${file.added}</span>
+              <span class="deleted">-${file.deleted}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
 }
 
 function renderFileDetail() {
@@ -2173,10 +2343,17 @@ function parseUnifiedDiff(diff) {
 
 function threadToMessages(thread) {
   const messages = [];
-  for (const turn of thread.turns || []) {
+  const turns = thread.turns || [];
+  for (let turnIndex = 0; turnIndex < turns.length; turnIndex += 1) {
+    const turn = turns[turnIndex];
     for (const item of turn.items || []) {
       if (item.type === "userMessage") {
-        messages.push({ role: "user", text: item.content.map(inputToText).join("\n") });
+        messages.push({
+          role: "user",
+          text: item.content.map(inputToText).join("\n"),
+          turnId: turn.id,
+          turnIndex,
+        });
       } else if (item.type === "agentMessage") {
         messages.push({ role: "assistant", text: item.text });
       } else if (item.type === "reasoning") {
@@ -2197,6 +2374,104 @@ function threadToMessages(thread) {
   return messages;
 }
 
+function nextUserTurnIndex() {
+  return state.messages.reduce((next, message) => {
+    if (message.role === "user" && Number.isInteger(message.turnIndex)) {
+      return Math.max(next, message.turnIndex + 1);
+    }
+    return next;
+  }, 0);
+}
+
+function trackedUserTurnCount() {
+  return Math.max(
+    nextUserTurnIndex(),
+    Array.isArray(state.currentThread?.turns) ? state.currentThread.turns.length : 0,
+  );
+}
+
+function renderEditTurnDialog() {
+  if (!els.editTurnModal) {
+    return;
+  }
+  els.editTurnTitle.textContent = t("editTurn.title");
+  els.editTurnHelp.textContent = t("editTurn.help");
+  document.getElementById("cancelEditTurn").textContent = t("editTurn.cancel");
+  document.getElementById("submitEditTurn").textContent = t("editTurn.regenerate");
+}
+
+function openEditTurnDialog(messageIndex) {
+  const message = state.messages[messageIndex];
+  if (!message || message.role !== "user" || !Number.isInteger(message.turnIndex)) {
+    return;
+  }
+  state.editingTurn = {
+    messageIndex,
+    turnIndex: message.turnIndex,
+    originalText: message.text || "",
+  };
+  renderEditTurnDialog();
+  els.editTurnText.value = message.text || "";
+  els.editTurnStatus.textContent = state.currentTurnId ? t("editTurn.waitForTurn") : "";
+  document.getElementById("submitEditTurn").disabled = Boolean(state.currentTurnId);
+  els.editTurnModal.classList.remove("hidden");
+  els.editTurnText.focus();
+  els.editTurnText.setSelectionRange(0, els.editTurnText.value.length);
+}
+
+function closeEditTurnDialog() {
+  state.editingTurn = null;
+  els.editTurnModal?.classList.add("hidden");
+  if (els.editTurnStatus) {
+    els.editTurnStatus.textContent = "";
+  }
+}
+
+async function regenerateFromEditedTurn() {
+  if (!state.editingTurn) {
+    return;
+  }
+  if (state.currentTurnId) {
+    els.editTurnStatus.textContent = t("editTurn.waitForTurn");
+    return;
+  }
+  const text = els.editTurnText.value.trim();
+  if (!text) {
+    els.editTurnStatus.textContent = t("editTurn.empty");
+    return;
+  }
+  const { turnIndex } = state.editingTurn;
+  const totalTurns = trackedUserTurnCount();
+  const numTurns = totalTurns - turnIndex;
+  if (numTurns < 1) {
+    els.editTurnStatus.textContent = t("editTurn.failed", { error: "invalid rollback target" });
+    return;
+  }
+
+  const submitButton = document.getElementById("submitEditTurn");
+  submitButton.disabled = true;
+  els.editTurnText.disabled = true;
+  els.editTurnStatus.textContent = "";
+
+  try {
+    state.queuedFollowUps = [];
+    const thread = await window.codexDesktop.rollbackThread({ numTurns });
+    state.currentThread = thread;
+    state.draftThreadId = null;
+    state.messages = threadToMessages(thread);
+    state.threadTitle = thread.name || thread.preview || state.threadTitle || "Codex";
+    closeEditTurnDialog();
+    appendMessage("user", text, { turnIndex: nextUserTurnIndex() });
+    await sendTurnToCodex(text, turnOptionsFromUi());
+  } catch (error) {
+    els.editTurnStatus.textContent = t("editTurn.failed", { error: error.message });
+    appendMessage("tool", error.message, { title: t("code.error"), kind: "error" });
+  } finally {
+    submitButton.disabled = false;
+    els.editTurnText.disabled = false;
+  }
+}
+
 function inputToText(input) {
   if (input.type === "text") {
     return input.text;
@@ -2210,9 +2485,12 @@ function inputToText(input) {
 async function refreshState() {
   const next = await window.codexDesktop.getState();
   const uiConfig = next.uiConfig || state.uiConfig;
+  const optimisticThreads = state.optimisticThreads;
   Object.assign(state, next);
   state.serverReady = next.serverReady;
   state.uiConfig = uiConfig;
+  state.optimisticThreads = optimisticThreads;
+  state.threads = mergeOptimisticThreads(next.threads);
   state.reviewOpen = Boolean(uiConfig.reviewOpen);
   state.selectedModel = uiConfig.selectedModel || "";
   state.selectedEffort = uiConfig.selectedEffort || "";
@@ -2230,26 +2508,78 @@ function reasoningMessageFromItem(item, status = "inProgress") {
   return {
     role: "reasoning",
     itemId: item.id,
+    turnId: item.turnId || null,
     summary: normalizedTextArray(item.summary),
     content: normalizedTextArray(item.content),
     status,
     open: status !== "completed",
     userToggled: false,
+    synthetic: Boolean(item.synthetic),
   };
 }
 
-function ensureReasoningMessage(itemId, item = null) {
+function syntheticReasoningItemId(turnId) {
+  return `turn:${turnId}:reasoning`;
+}
+
+function startTurnReasoningIndicator(turnId) {
+  if (!turnId || state.messages.some((message) => message.role === "reasoning" && message.turnId === turnId)) {
+    return;
+  }
+  state.messages.push(
+    reasoningMessageFromItem({
+      id: syntheticReasoningItemId(turnId),
+      turnId,
+      summary: [],
+      content: [],
+      synthetic: true,
+    }),
+  );
+}
+
+function findReasoningMessageForTurn(turnId) {
+  if (!turnId) {
+    return null;
+  }
+  return state.messages.find((message) => message.role === "reasoning" && message.turnId === turnId && message.synthetic);
+}
+
+function completeTurnReasoningIndicators(turnId) {
+  state.messages = state.messages.filter((message) => {
+    if (message.role !== "reasoning" || message.turnId !== turnId) {
+      return true;
+    }
+    const hasSummary = normalizedTextArray(message.summary).some((part) => part.trim());
+    if (message.synthetic && !hasSummary) {
+      return false;
+    }
+    message.status = "completed";
+    if (!message.userToggled) {
+      message.open = false;
+    }
+    return true;
+  });
+}
+
+function ensureReasoningMessage(itemId, item = null, turnId = null) {
   let message = findStreamingMessage(itemId);
   if (!message) {
-    message = reasoningMessageFromItem(
-      item || {
-        id: itemId,
-        summary: [],
-        content: [],
-      },
-    );
-    state.messages.push(message);
-    return message;
+    message = findReasoningMessageForTurn(turnId);
+    if (message) {
+      message.itemId = itemId;
+      message.synthetic = false;
+    } else {
+      message = reasoningMessageFromItem(
+        item || {
+          id: itemId,
+          turnId,
+          summary: [],
+          content: [],
+        },
+      );
+      state.messages.push(message);
+      return message;
+    }
   }
 
   if (message.role !== "reasoning") {
@@ -2265,6 +2595,10 @@ function ensureReasoningMessage(itemId, item = null) {
     message.summary = normalizedTextArray(item.summary);
     message.content = normalizedTextArray(item.content);
   }
+  if (turnId) {
+    message.turnId = turnId;
+  }
+  message.synthetic = false;
   message.status = message.status || "inProgress";
   message.open ??= message.status !== "completed";
   return message;
@@ -2307,7 +2641,10 @@ async function submitPrompt(followUpOverride = null) {
     return;
   }
   els.prompt.value = "";
-  appendMessage("user", text);
+  if (state.currentThread?.id === state.draftThreadId) {
+    state.draftThreadId = null;
+  }
+  appendMessage("user", text, { turnIndex: nextUserTurnIndex() });
 
   const activeTurnId = state.currentTurnId;
   const behavior = followUpOverride || uiConfigValue("followUpBehavior", "queue");
@@ -2350,14 +2687,21 @@ window.codexDesktop.onEvent(({ method, params }) => {
   if (method === "thread/started") {
     state.currentThread = params.thread;
     state.threadTitle = params.thread.name || params.thread.preview || "New chat";
+    upsertThread(params.thread, { optimistic: true });
     renderSidebar();
     renderHeader();
   } else if (method === "turn/started") {
     state.currentTurnId = params.turn.id;
+    const pendingUserMessage = [...state.messages].reverse().find((message) => message.role === "user" && !message.turnId);
+    if (pendingUserMessage) {
+      pendingUserMessage.turnId = params.turn.id;
+    }
+    startTurnReasoningIndicator(params.turn.id);
+    scheduleConversationRender();
   } else if (method === "item/started") {
     if (params.item?.type === "reasoning") {
-      ensureReasoningMessage(params.item.id, params.item);
-      renderConversation();
+      ensureReasoningMessage(params.item.id, params.item, params.turnId);
+      scheduleConversationRender();
     }
   } else if (method === "item/agentMessage/delta") {
     let message = findStreamingMessage(params.itemId);
@@ -2365,28 +2709,30 @@ window.codexDesktop.onEvent(({ method, params }) => {
       message = appendMessage("assistant", "", { itemId: params.itemId });
     }
     message.text += params.delta;
-    renderConversation();
+    scheduleConversationRender();
   } else if (method === "item/reasoning/summaryPartAdded") {
-    const message = ensureReasoningMessage(params.itemId);
+    const message = ensureReasoningMessage(params.itemId, null, params.turnId);
     ensureTextArrayIndex(message.summary, params.summaryIndex);
-    renderConversation();
+    scheduleConversationRender();
   } else if (method === "item/reasoning/summaryTextDelta") {
-    const message = ensureReasoningMessage(params.itemId);
+    const message = ensureReasoningMessage(params.itemId, null, params.turnId);
     const index = ensureTextArrayIndex(message.summary, params.summaryIndex);
     message.summary[index] += params.delta || "";
-    renderConversation();
+    scheduleConversationRender();
   } else if (method === "item/reasoning/textDelta") {
-    const message = ensureReasoningMessage(params.itemId);
+    const message = ensureReasoningMessage(params.itemId, null, params.turnId);
     const index = ensureTextArrayIndex(message.content, params.contentIndex);
     message.content[index] += params.delta || "";
-    renderConversation();
+    scheduleConversationRender();
   } else if (method === "item/completed") {
-    handleCompletedItem(params.item);
+    handleCompletedItem(params.item, params.turnId);
   } else if (method === "turn/diff/updated") {
     state.git.diff = params.diff;
     renderGit();
   } else if (method === "turn/completed") {
+    completeTurnReasoningIndicators(params.turn?.id || state.currentTurnId);
     state.currentTurnId = null;
+    renderConversation();
     window.codexDesktop.refreshGit().then((git) => {
       state.git = git;
       renderGit();
@@ -2400,11 +2746,12 @@ window.codexDesktop.onEvent(({ method, params }) => {
     refreshState();
   } else if (method === "thread/archived") {
     state.threads = state.threads.filter((thread) => thread.id !== params.threadId);
+    state.optimisticThreads = state.optimisticThreads.filter((thread) => thread.id !== params.threadId);
     renderAll();
   }
 });
 
-function handleCompletedItem(item) {
+function handleCompletedItem(item, turnId = null) {
   if (item.type === "agentMessage") {
     const message = findStreamingMessage(item.id);
     if (message) {
@@ -2413,7 +2760,7 @@ function handleCompletedItem(item) {
       appendMessage("assistant", item.text, { itemId: item.id });
     }
   } else if (item.type === "reasoning") {
-    const message = ensureReasoningMessage(item.id, item);
+    const message = ensureReasoningMessage(item.id, item, turnId);
     message.status = "completed";
     if (!message.userToggled) {
       message.open = false;
@@ -2493,10 +2840,14 @@ els.prompt.addEventListener("keydown", (event) => {
 });
 
 document.getElementById("newChat").addEventListener("click", async () => {
+  await discardEmptyDraftThreadIfNeeded();
   const thread = await window.codexDesktop.newThread();
   state.currentThread = thread;
+  state.draftThreadId = thread.id;
   state.messages = [];
   state.threadTitle = t("nav.newChat");
+  upsertThread(thread, { optimistic: true });
+  renderAll();
   await refreshState();
 });
 
@@ -2639,6 +2990,20 @@ document.getElementById("closeSettings").addEventListener("click", () => {
 els.settingsModal.addEventListener("click", (event) => {
   if (event.target === els.settingsModal) {
     els.settingsModal.classList.add("hidden");
+  }
+});
+document.getElementById("closeEditTurn")?.addEventListener("click", closeEditTurnDialog);
+document.getElementById("cancelEditTurn")?.addEventListener("click", closeEditTurnDialog);
+document.getElementById("submitEditTurn")?.addEventListener("click", regenerateFromEditedTurn);
+els.editTurnModal?.addEventListener("click", (event) => {
+  if (event.target === els.editTurnModal) {
+    closeEditTurnDialog();
+  }
+});
+els.editTurnText?.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    event.preventDefault();
+    regenerateFromEditedTurn();
   }
 });
 els.settingsOpenAuth?.addEventListener("click", () => {
@@ -2794,6 +3159,25 @@ els.conversation.addEventListener("click", async (event) => {
     return;
   }
 
+  const userAction = event.target.closest("[data-user-action]");
+  if (userAction) {
+    event.preventDefault();
+    event.stopPropagation();
+    const messageIndex = Number.parseInt(userAction.dataset.messageIndex || "-1", 10);
+    const message = state.messages[messageIndex];
+    if (!message || message.role !== "user") {
+      return;
+    }
+    if (userAction.dataset.userAction === "copy") {
+      window.codexDesktop.copyText(message.text || "");
+      return;
+    }
+    if (userAction.dataset.userAction === "edit") {
+      openEditTurnDialog(messageIndex);
+      return;
+    }
+  }
+
   const link = event.target.closest(".markdown-body a[href]");
   if (!link) {
     return;
@@ -2824,15 +3208,23 @@ els.conversation.addEventListener(
   },
   true,
 );
+els.commitButton?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  els.commitMenu?.classList.toggle("hidden");
+  els.modelMenu.classList.add("hidden");
+  els.permissionMenu?.classList.add("hidden");
+});
 els.modelChoice.addEventListener("click", (event) => {
   event.stopPropagation();
   els.modelMenu.classList.toggle("hidden");
   els.permissionMenu?.classList.add("hidden");
+  els.commitMenu?.classList.add("hidden");
 });
 els.permissionChoice?.addEventListener("click", (event) => {
   event.stopPropagation();
   els.permissionMenu.classList.toggle("hidden");
   els.modelMenu.classList.add("hidden");
+  els.commitMenu?.classList.add("hidden");
 });
 document.addEventListener("click", (event) => {
   if (!event.target.closest(".context-menu")) {
@@ -2844,12 +3236,16 @@ document.addEventListener("click", (event) => {
   if (!event.target.closest(".permission-control")) {
     els.permissionMenu?.classList.add("hidden");
   }
+  if (!event.target.closest(".commit-control")) {
+    els.commitMenu?.classList.add("hidden");
+  }
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     hideContextMenu();
     els.modelMenu.classList.add("hidden");
     els.permissionMenu?.classList.add("hidden");
+    els.commitMenu?.classList.add("hidden");
   }
 });
 

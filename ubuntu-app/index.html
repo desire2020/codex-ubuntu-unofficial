@@ -55,8 +55,14 @@
           </div>
           <div class="top-actions">
             <button class="auth-button" id="loginButton"><span class="icon key"></span><span id="authButtonLabel">Sign in</span></button>
-            <button class="commit-button"><span class="icon commit"></span><span>Commit</span></button>
-            <span class="change-pill"><span class="added" id="topAdded">+0</span><span class="deleted" id="topDeleted">-0</span></span>
+            <div class="commit-control">
+              <button class="commit-button" id="commitButton" type="button" aria-label="Commit">
+                <span class="icon commit"></span>
+                <span class="commit-label">Commit</span>
+                <span class="commit-count"><span class="added" id="topAdded">+0</span><span class="deleted" id="topDeleted">-0</span></span>
+              </button>
+              <div class="commit-menu hidden" id="commitMenu"></div>
+            </div>
           </div>
         </header>
 
@@ -127,6 +133,24 @@
 
       <button class="review-reopen hidden" id="openReview" aria-label="Open file details"><span class="icon review"></span></button>
       <div class="context-menu hidden" id="contextMenu" role="menu"></div>
+
+      <div class="edit-turn-modal hidden" id="editTurnModal" role="dialog" aria-modal="true" aria-labelledby="editTurnTitle">
+        <section class="edit-turn-panel">
+          <header class="edit-turn-header">
+            <div>
+              <strong id="editTurnTitle">Edit and regenerate</strong>
+              <span id="editTurnHelp">Rollback to this turn, edit the user input, and run Codex again.</span>
+            </div>
+            <button class="small-icon" id="closeEditTurn" aria-label="Close"><span class="icon plus close-x"></span></button>
+          </header>
+          <textarea id="editTurnText" rows="8" spellcheck="true"></textarea>
+          <p id="editTurnStatus"></p>
+          <footer class="edit-turn-actions">
+            <button id="cancelEditTurn" type="button">Cancel</button>
+            <button id="submitEditTurn" class="primary" type="button">Regenerate</button>
+          </footer>
+        </section>
+      </div>
 
       <div class="auth-modal hidden" id="authModal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
         <section class="auth-panel">

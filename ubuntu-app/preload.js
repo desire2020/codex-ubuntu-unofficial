@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   newThread: () => ipcRenderer.invoke("thread:new"),
   resumeThread: (threadId) => ipcRenderer.invoke("thread:resume", threadId),
   archiveThread: (threadId) => ipcRenderer.invoke("thread:archive", threadId),
+  rollbackThread: (payload) => ipcRenderer.invoke("thread:rollback", payload),
   startTurn: (payload) => ipcRenderer.invoke("turn:start", payload),
   startReview: (payload) => ipcRenderer.invoke("review:start", payload),
   refreshGit: () => ipcRenderer.invoke("git:refresh"),

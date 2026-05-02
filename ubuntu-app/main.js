@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
 
-const APP_VERSION = "0.1.23";
+const APP_VERSION = "0.1.29";
 const CLIENT_INFO = {
   name: "codex_ubuntu_desktop",
   title: "Codex Ubuntu Desktop",
@@ -81,6 +81,10 @@ function bundledLibraryPath() {
 
 function serviceTierForSpeed(speed) {
   return speed === "fast" ? "fast" : null;
+}
+
+function reasoningSummaryForUi(value) {
+  return ["auto", "concise", "detailed", "none"].includes(value) ? value : "auto";
 }
 
 function approvalPolicyForPermissionMode(permissionMode) {
@@ -524,6 +528,18 @@ class CodexAppServerClient {
     return this.request("thread/archive", { threadId });
   }
 
+  async rollbackThread(numTurns) {
+    if (!this.currentThread?.id) {
+      throw new Error("No active thread to roll back.");
+    }
+    const result = await this.request("thread/rollback", {
+      threadId: this.currentThread.id,
+      numTurns,
+    });
+    this.currentThread = result.thread;
+    return result.thread;
+  }
+
   async listThreads() {
     const threads = [];
     let cursor = null;
@@ -535,6 +551,7 @@ class CodexAppServerClient {
         sortKey: "updated_at",
         sortDirection: "desc",
         archived: false,
+        cwd: this.workspace,
       });
       threads.push(...(result.data || []));
       cursor = result.nextCursor || null;
@@ -582,6 +599,7 @@ class CodexAppServerClient {
       approvalPolicy: approvalPolicyForPermissionMode(options.permissionMode),
       permissions: permissionSelectionForMode(options.permissionMode),
       effort: collaborationMode ? null : options.effort || "high",
+      summary: reasoningSummaryForUi(options.reasoningSummary),
       model: collaborationMode ? null : options.model || null,
       serviceTier: serviceTierForSpeed(options.speed),
       personality: personalityForUi(options.personality),
@@ -871,7 +889,7 @@ ipcMain.handle("app:get-state", async () => {
   const workspace = workspaceInfo.workspace;
   const [git, threads, account] = await Promise.all([
     workspaceInfo.fallback ? Promise.resolve(emptyGitState()) : getGitState(workspace),
-    codexClient?.initialized ? codexClient.listThreads().catch(() => []) : Promise.resolve([]),
+    !workspaceInfo.fallback && codexClient?.initialized ? codexClient.listThreads().catch(() => []) : Promise.resolve([]),
     codexClient?.initialized ? codexClient.readAccount().catch(() => null) : Promise.resolve(null),
   ]);
   const models = codexClient?.initialized ? await codexClient.listModels().catch(() => []) : [];
@@ -881,6 +899,7 @@ ipcMain.handle("app:get-state", async () => {
     serverReady: Boolean(codexClient?.initialized),
     git,
     threads,
+    currentThread: codexClient?.currentThread || null,
     projects: listProjects(workspace),
     workspaceIsFallback: workspaceInfo.fallback,
     account,
@@ -893,6 +912,7 @@ ipcMain.handle("app:get-state", async () => {
 ipcMain.handle("thread:new", async () => codexClient.startThread());
 ipcMain.handle("thread:resume", async (_event, threadId) => codexClient.resumeThread(threadId));
 ipcMain.handle("thread:archive", async (_event, threadId) => codexClient.archiveThread(threadId));
+ipcMain.handle("thread:rollback", async (_event, payload) => codexClient.rollbackThread(payload?.numTurns || 0));
 ipcMain.handle("turn:start", async (_event, payload) => codexClient.sendMessage(payload.text, payload.options || {}));
 ipcMain.handle("review:start", async (_event, payload) => codexClient.startReview(payload || {}));
 ipcMain.handle("git:refresh", async () => (workspaceIsFallback ? emptyGitState() : getGitState(codexClient.workspace)));
@@ -922,6 +942,7 @@ ipcMain.handle("workspace:choose", async () => {
   }
   const workspace = result.filePaths[0];
   codexClient.workspace = workspace;
+  codexClient.currentThread = null;
   workspaceIsFallback = false;
   rememberProject(workspace);
   return workspace;
@@ -932,6 +953,7 @@ ipcMain.handle("workspace:open", async (_event, workspace) => {
     return null;
   }
   codexClient.workspace = projectPath;
+  codexClient.currentThread = null;
   workspaceIsFallback = false;
   rememberProject(projectPath);
   return projectPath;
