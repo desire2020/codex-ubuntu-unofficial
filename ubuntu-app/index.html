@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell" id="shell">
+      <aside class="sidebar">
+        <div class="traffic" role="presentation">
+          <button class="dot close" id="closeWindow" aria-label="Close"></button>
+          <button class="dot minimize" id="minimizeWindow" aria-label="Minimize"></button>
+          <button class="dot zoom" id="maximizeWindow" aria-label="Maximize"></button>
+          <span class="rail-icon"></span>
+        </div>
+
+        <nav class="primary-nav" aria-label="Main">
+          <button class="nav-item" id="newChat"><span class="icon pen"></span><span>New chat</span></button>
+          <button class="nav-item"><span class="icon search"></span><span>Search</span></button>
+          <button class="nav-item"><span class="icon grid"></span><span>Plugins</span></button>
+          <button class="nav-item"><span class="icon clock"></span><span>Automations</span></button>
+        </nav>
+
+        <section class="side-section">
+          <div class="section-label">Pinned</div>
+          <div id="pinnedThreads" class="list"></div>
+        </section>
+
+        <section class="side-section projects-section">
+          <div class="section-row">
+            <div class="section-label">Projects</div>
+            <button class="small-icon" id="chooseWorkspace" aria-label="Choose workspace"><span class="icon folder-add"></span></button>
+          </div>
+          <div id="projects" class="list"></div>
+        </section>
+
+        <section class="side-section chats-section">
+          <div class="section-row">
+            <div class="section-label">Chats</div>
+            <button class="small-icon" id="refreshState" aria-label="Refresh"><span class="icon refresh"></span></button>
+          </div>
+          <div id="threads" class="list"></div>
+        </section>
+
+        <button class="settings" id="settingsButton"><span class="icon gear"></span><span>Settings</span></button>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="title-block">
+            <strong id="threadTitle">Codex</strong>
+            <span id="workspaceName"></span>
+          </div>
+          <div class="top-actions">
+            <button class="auth-button" id="loginButton"><span class="icon key"></span><span id="authButtonLabel">Sign in</span></button>
+            <button class="commit-button"><span class="icon commit"></span><span>Commit</span></button>
+            <span class="change-pill"><span class="added" id="topAdded">+0</span><span class="deleted" id="topDeleted">-0</span></span>
+          </div>
+        </header>
+
+        <section class="conversation" id="conversation">
+          <div class="empty-state" id="emptyState">
+            <div class="empty-title" id="emptyTitle">Start a Codex thread</div>
+            <div class="empty-subtitle" id="emptySubtitle"></div>
+          </div>
+        </section>
+
+        <section class="composer-wrap">
+          <div class="approval-card hidden" id="approvalCard">
+            <div>
+              <strong id="approvalTitle">Approval requested</strong>
+              <p id="approvalDetail"></p>
+            </div>
+            <div class="approval-actions">
+              <button id="declineApproval">Decline</button>
+              <button class="primary" id="acceptApproval">Approve</button>
+            </div>
+          </div>
+          <form class="composer" id="composer">
+            <textarea id="prompt" rows="3" placeholder="Ask for follow-up changes"></textarea>
+            <div class="composer-meta">
+              <button type="button" class="round-tool" aria-label="Add context"><span class="icon plus"></span></button>
+              <div class="permission-control">
+                <button type="button" class="permission-button" id="permissionChoice"><span class="icon hand"></span><span id="permissionChoiceLabel">Full access</span></button>
+                <div class="permission-menu hidden" id="permissionMenu"></div>
+              </div>
+              <div class="spacer"></div>
+              <div class="model-control">
+                <button type="button" class="model-choice" id="modelChoice"><span class="icon bolt"></span><span id="modelChoiceLabel">Model</span></button>
+                <div class="model-menu hidden" id="modelMenu"></div>
+              </div>
+              <div class="effort-buttons hidden" id="effortButtons" aria-label="Reasoning effort"></div>
+              <button type="submit" class="send-button" aria-label="Send"><span class="icon arrow-up"></span></button>
+            </div>
+          </form>
+          <div class="status-row">
+            <button id="workMode"><span class="icon computer"></span><span>Work locally</span></button>
+            <button id="branchButton"><span class="icon branch"></span><span id="branchName">main</span></button>
+            <span id="serverStatus">Starting</span>
+          </div>
+        </section>
+      </main>
+
+      <aside class="review">
+        <header class="review-top">
+          <button class="icon-button" id="refreshGitTop" aria-label="Refresh diff"><span class="icon refresh"></span></button>
+          <button class="tab active" id="startReview"><span class="icon review"></span><span>Review</span></button>
+          <button class="icon-button" aria-label="New review"><span class="icon plus"></span></button>
+          <button class="icon-button close-review" id="closeReview" aria-label="Close file details"><span class="icon plus close-x"></span></button>
+        </header>
+        <div class="review-heading">
+          <div>
+            <strong id="reviewTitle">Unstaged</strong>
+            <span class="count" id="fileCount">0</span>
+          </div>
+          <button class="small-icon" aria-label="More"><span class="icon dots"></span></button>
+        </div>
+        <div id="fileSummary" class="file-summary"></div>
+        <div id="diffViewer" class="diff-viewer"></div>
+        <footer class="review-footer">
+          <button id="revertAll" disabled>Revert all</button>
+          <button id="stageAll" disabled>Stage all</button>
+        </footer>
+      </aside>
+
+      <button class="review-reopen hidden" id="openReview" aria-label="Open file details"><span class="icon review"></span></button>
+      <div class="context-menu hidden" id="contextMenu" role="menu"></div>
+
+      <div class="auth-modal hidden" id="authModal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+        <section class="auth-panel">
+          <header class="auth-header">
+            <div>
+              <strong id="authTitle">Sign in to Codex</strong>
+              <span id="authAccountStatus">OpenAI auth required</span>
+            </div>
+            <button class="small-icon" id="closeAuth" aria-label="Close"><span class="icon plus close-x"></span></button>
+          </header>
+
+          <div class="auth-tabs" role="tablist">
+            <button class="auth-tab active" data-auth-tab="browser">ChatGPT</button>
+            <button class="auth-tab" data-auth-tab="device">Device code</button>
+            <button class="auth-tab" data-auth-tab="api">API key</button>
+          </div>
+
+          <div class="auth-pane active" id="authPaneBrowser">
+            <div class="auth-signed-in" id="authSignedIn"></div>
+            <button class="primary-auth" id="startBrowserLogin">Continue in browser</button>
+            <p id="browserLoginStatus"></p>
+          </div>
+
+          <div class="auth-pane" id="authPaneDevice">
+            <button class="primary-auth" id="startDeviceLogin">Generate code</button>
+            <div class="device-code hidden" id="deviceCodeBox">
+              <span id="deviceUrl"></span>
+              <strong id="deviceCode"></strong>
+              <button id="openDeviceUrl">Open page</button>
+            </div>
+          </div>
+
+          <div class="auth-pane" id="authPaneApi">
+            <input id="apiKeyInput" type="password" autocomplete="off" placeholder="sk-..." />
+            <button class="primary-auth" id="saveApiKey">Save API key</button>
+          </div>
+
+          <footer class="auth-footer">
+            <button id="cancelLogin" disabled>Cancel login</button>
+            <button id="logoutButton">Sign out</button>
+          </footer>
+        </section>
+      </div>
+
+      <div class="settings-modal hidden" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <section class="settings-panel">
+          <header class="settings-header">
+            <div>
+              <strong id="settingsTitle">Settings</strong>
+              <span id="settingsVersion">Codex Desktop</span>
+            </div>
+            <button class="small-icon" id="closeSettings" aria-label="Close"><span class="icon plus close-x"></span></button>
+          </header>
+
+          <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+            <button class="settings-tab active" data-settings-tab="general">General</button>
+            <button class="settings-tab" data-settings-tab="configuration">Configuration</button>
+            <button class="settings-tab" data-settings-tab="personalization">Personalization</button>
+            <button class="settings-tab" data-settings-tab="mcp">MCP servers</button>
+            <button class="settings-tab" data-settings-tab="usage">Usage</button>
+            <button class="settings-tab" data-settings-tab="plugins">Plugins</button>
+            <button class="settings-tab" data-settings-tab="appearance">Appearance</button>
+          </div>
+
+          <div class="settings-body">
+            <div class="settings-pane active" id="settingsPaneGeneral">
+              <section class="settings-section">
+                <label class="settings-row field-row">
+                  <div>
+                    <strong>Language</strong>
+                    <span>Language for the app UI</span>
+                  </div>
+                  <select id="settingsLanguage" class="settings-input">
+                    <option value="auto">Auto Detect</option>
+                    <option value="en">English</option>
+                    <option value="zh-CN">简体中文</option>
+                  </select>
+                </label>
+                <label class="settings-row field-row">
+                  <div>
+                    <strong>Require ^ + enter to send long prompts</strong>
+                    <span>When enabled, multiline prompts require ^ + enter to send.</span>
+                  </div>
+                  <input id="settingsRequireCtrlEnter" type="checkbox" />
+                </label>
+                <label class="settings-row field-row">
+                  <div>
+                    <strong>Speed</strong>
+                    <span>Choose how quickly inference runs across chats, subagents, and compaction. Fast uses increased plan usage</span>
+                  </div>
+                  <select id="settingsSpeed" class="settings-input">
+                    <option value="standard">Standard</option>
+                    <option value="fast">Fast</option>
+                  </select>
+                </label>
+                <div class="settings-row">
+                  <div>
+                    <strong>Follow-up behavior</strong>
+                    <span>Queue follow-ups while Codex runs or steer the current run. Press Ctrl+Enter to do the opposite for one message</span>
+                  </div>
+                  <div class="settings-segment" id="settingsFollowUpBehavior">
+                    <button type="button" data-value="queue">Queue</button>
+                    <button type="button" data-value="steer">Steer</button>
+                  </div>
+                </div>
+                <div class="settings-row">
+                  <div>
+                    <strong>Code review</strong>
+                    <span>Start /review in the current chat when possible or launch a separate review chat</span>
+                  </div>
+                  <div class="settings-segment" id="settingsCodeReviewMode">
+                    <button type="button" data-value="inline">Inline</button>
+                    <button type="button" data-value="detached">Detached</button>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div class="settings-pane" id="settingsPaneConfiguration">
+              <div class="settings-pane-heading">
+                <strong>Configuration</strong>
+                <span>Configure approval policy and sandbox settings <button class="link-button" id="settingsConfigDocs">Learn more</button></span>
+              </div>
+
+              <section class="settings-section">
+                <div class="settings-section-title">Custom config.toml settings</div>
+                <div class="settings-row">
+                  <div>
+                    <strong id="settingsConfigPath">config.toml</strong>
+                    <span id="settingsConfigStatus">Edit your config to customize agent behavior. Restart Codex after editing to apply changes</span>
+                  </div>
+                  <button id="settingsOpenConfig">Open config.toml</button>
+                </div>
+                <div class="settings-row">
+                  <div>
+                    <strong>Open source licenses</strong>
+                    <span>Third-party notices for bundled dependencies</span>
+                  </div>
+                  <button id="settingsViewLicenses">View</button>
+                </div>
+              </section>
+            </div>
+
+            <div class="settings-pane" id="settingsPanePersonalization">
+              <section class="settings-section">
+                <label class="settings-row field-row">
+                  <div>
+                    <strong>Personality</strong>
+                    <span>Choose a default tone for Codex responses</span>
+                  </div>
+                  <select id="settingsPersonality" class="settings-input">
+                    <option value="friendly">Friendly</option>
+                    <option value="pragmatic">Pragmatic</option>
+                  </select>
+                </label>
+              </section>
+
+              <section class="settings-section loose-section">
+                <div class="settings-section-title">Custom instructions</div>
+                <div class="settings-description">Give Codex extra instructions and context for your project</div>
+                <textarea id="settingsCustomInstructions" class="settings-textarea" placeholder="Add your custom instructions..."></textarea>
+                <div class="settings-actions settings-actions-end">
+                  <button id="settingsSavePersonalization">Save</button>
+                </div>
+              </section>
+
+              <section class="settings-section">
+                <div class="settings-section-title">Memory (experimental)</div>
+                <div class="settings-description">Configure how Codex collects, retains, and consolidates memories. <button class="link-button" id="settingsMemoryDocs">Learn more</button></div>
+                <label class="settings-row field-row">
+                  <div>
+                    <strong>Enable memories</strong>
+                    <span>Generate new memories from chats and bring them into new chats</span>
+                  </div>
+                  <input id="settingsEnableMemories" type="checkbox" />
+                </label>
+                <label class="settings-row field-row unavailable">
+                  <div>
+                    <strong><span class="settings-label-text">Skip tool-assisted chats</span><span class="settings-status-pill">Coming soon</span></strong>
+                    <span>Do not generate memories from chats that used MCP tools or web search</span>
+                  </div>
+                  <input id="settingsSkipToolMemories" type="checkbox" />
+                </label>
+                <div class="settings-row">
+                  <div>
+                    <strong>Reset memories</strong>
+                    <span>Clear memory preferences stored by this desktop app</span>
+                  </div>
+                  <button id="settingsResetMemories" class="danger-button">Reset</button>
+                </div>
+              </section>
+            </div>
+
+            <div class="settings-pane" id="settingsPaneMcp">
+              <div class="settings-pane-heading">
+                <strong>MCP servers</strong>
+                <span>Connect external tools and data sources. <button class="link-button" id="settingsMcpDocs">Learn more.</button></span>
+              </div>
+
+              <section class="settings-section">
+                <div class="settings-section-title">Servers</div>
+                <div id="settingsMcpServers" class="settings-layer-list"></div>
+                <div class="settings-row">
+                  <div>
+                    <strong>Add or edit MCP servers</strong>
+                    <span>MCP servers are configured in config.toml</span>
+                  </div>
+                  <button id="settingsAddMcpServer">+ Add server</button>
+                </div>
+              </section>
+            </div>
+
+            <div class="settings-pane" id="settingsPaneUsage">
+              <section class="settings-section">
+                <div class="settings-section-title">Account</div>
+                <div class="settings-row">
+                  <div>
+                    <strong id="settingsAccount">Sign in</strong>
+                    <span id="settingsAccountDetail">OpenAI auth</span>
+                  </div>
+                  <div class="settings-actions">
+                    <button id="settingsOpenAuth">Sign in</button>
+                    <button id="settingsLogout">Sign out</button>
+                  </div>
+                </div>
+                <div class="settings-row">
+                  <div>
+                    <strong>Plan usage</strong>
+                    <span id="settingsUsageDetail">Usage details open in your OpenAI account</span>
+                  </div>
+                  <button id="settingsOpenUsage">View usage</button>
+                </div>
+              </section>
+
+              <section class="settings-section">
+                <div class="settings-section-title">Local environment</div>
+                <div class="settings-row">
+                  <div>
+                    <strong id="settingsWorkspaceName">Workspace</strong>
+                    <span id="settingsWorkspacePath"></span>
+                  </div>
+                  <button id="settingsChooseWorkspace">Change</button>
+                </div>
+                <div class="settings-row runtime-row">
+                  <div>
+                    <strong>Codex binary</strong>
+                    <span id="settingsCodexBin"></span>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div class="settings-pane" id="settingsPanePlugins">
+              <div class="settings-plugin-header">
+                <strong>Make Codex work your way</strong>
+                <div class="settings-plugin-filters">
+                  <input id="settingsPluginSearch" class="settings-input" placeholder="Search plugins" />
+                  <select id="settingsPluginBuiltBy" class="settings-input">
+                    <option>Built by OpenAI</option>
+                    <option>All builders</option>
+                  </select>
+                  <select id="settingsPluginCategory" class="settings-input">
+                    <option>All</option>
+                    <option>Messaging</option>
+                    <option>Files</option>
+                    <option>Calendar</option>
+                  </select>
+                </div>
+              </div>
+
+              <section class="settings-plugin-hero unavailable">
+                <div>
+                  <strong>Slack</strong>
+                  <span>Prep me for standup every morning</span>
+                </div>
+                <button id="settingsTryPlugin">Try in chat</button>
+              </section>
+
+              <section class="settings-section">
+                <div class="settings-section-title">Featured</div>
+                <div id="settingsPluginList" class="settings-plugin-list"></div>
+              </section>
+            </div>
+
+            <div class="settings-pane" id="settingsPaneAppearance">
+              <section class="settings-section">
+                <div class="settings-section-title">Appearance</div>
+                <label class="settings-row toggle-row">
+                  <div>
+                    <strong>File details panel</strong>
+                    <span>Open on launch</span>
+                  </div>
+                  <input id="settingsReviewOpen" type="checkbox" />
+                </label>
+                <div class="settings-row">
+                  <div>
+                    <strong id="settingsModel">Model selector</strong>
+                    <span id="settingsEffort">Reasoning effort selector</span>
+                  </div>
+                  <button id="settingsResetUi">Reset UI</button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script src="./vendor/markdown-it.min.js"></script>
+    <script src="./renderer.js"></script>
+  </body>
+</html>

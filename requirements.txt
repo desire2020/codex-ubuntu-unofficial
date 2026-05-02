@@ -1,0 +1,8 @@
+# Additional local development tools installed in the base conda environment.
+# These are conda package pins, not Python runtime requirements:
+# conda install -c conda-forge rust=1.94.0 just=1.50.0 c-compiler=1.0.0 gcc_linux-64=15.2.0 binutils_linux-64=2.44 pkg-config=0.29.2 zlib openssl=3.6.2 libcap=2.78 nodejs=22.6.0
+#
+# Additional npm package used by ubuntu-app:
+# npm --prefix ubuntu-app install
+# - electron@^39.2.6
+# - markdown-it@^14.1.1

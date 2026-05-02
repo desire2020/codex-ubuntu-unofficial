@@ -1,0 +1,17 @@
+{
+  "name": "codex-ubuntu-desktop",
+  "version": "0.1.22",
+  "private": true,
+  "description": "Unofficial Ubuntu desktop client for Codex.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node --check renderer.js"
+  },
+  "devDependencies": {
+    "electron": "^39.2.6"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.1"
+  }
+}
