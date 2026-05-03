@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
 
-const APP_VERSION = "0.1.37";
+const APP_VERSION = "0.2.0";
 const CLIENT_INFO = {
   name: "codex_ubuntu_desktop",
   title: "Codex Ubuntu Desktop",
@@ -330,6 +330,74 @@ function sendToRenderer(channel, payload) {
   mainWindow.webContents.send(channel, payload);
 }
 
+function numericTokenValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function tokenBreakdownForUi(value = {}) {
+  return {
+    totalTokens: numericTokenValue(value.totalTokens ?? value.total_tokens),
+    inputTokens: numericTokenValue(value.inputTokens ?? value.input_tokens),
+    cachedInputTokens: numericTokenValue(value.cachedInputTokens ?? value.cached_input_tokens),
+    outputTokens: numericTokenValue(value.outputTokens ?? value.output_tokens),
+    reasoningOutputTokens: numericTokenValue(value.reasoningOutputTokens ?? value.reasoning_output_tokens),
+  };
+}
+
+function tokenUsageForUi(value) {
+  if (!value) {
+    return null;
+  }
+  const total = value.total || value.total_token_usage;
+  const last = value.last || value.last_token_usage;
+  if (!total || !last) {
+    return null;
+  }
+  const contextWindow = numericTokenValue(value.modelContextWindow ?? value.model_context_window);
+  return {
+    total: tokenBreakdownForUi(total),
+    last: tokenBreakdownForUi(last),
+    modelContextWindow: contextWindow > 0 ? contextWindow : null,
+  };
+}
+
+async function latestTokenUsageFromRollout(rolloutPath) {
+  if (!rolloutPath || !fs.existsSync(rolloutPath)) {
+    return null;
+  }
+
+  let latest = null;
+  const stream = fs.createReadStream(rolloutPath, { encoding: "utf8" });
+  const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+      let item;
+      try {
+        item = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const payload = item?.type === "event_msg" ? item.payload : item?.payload;
+      if (payload?.type !== "token_count" || !payload.info) {
+        continue;
+      }
+      const usage = tokenUsageForUi(payload.info);
+      if (usage) {
+        latest = usage;
+      }
+    }
+  } finally {
+    lines.close();
+    stream.destroy();
+  }
+
+  return latest;
+}
+
 class CodexAppServerClient {
   constructor({ codexBin, workspace }) {
     this.codexBin = codexBin;
@@ -341,6 +409,7 @@ class CodexAppServerClient {
     this.initialized = false;
     this.pendingServerRequests = new Map();
     this.accountState = null;
+    this.threadTokenUsageById = {};
   }
 
   async start() {
@@ -478,10 +547,22 @@ class CodexAppServerClient {
     if (method === "thread/started") {
       this.currentThread = params.thread;
     }
+    if (method === "thread/tokenUsage/updated") {
+      this.rememberThreadTokenUsage(params.threadId, params.tokenUsage);
+    }
     if (method === "account/rateLimits/updated") {
       this.rateLimits = { rateLimits: params.rateLimits, rateLimitsByLimitId: null };
     }
     sendToRenderer("codex:event", { method, params });
+  }
+
+  rememberThreadTokenUsage(threadId, tokenUsage) {
+    const usage = tokenUsageForUi(tokenUsage);
+    if (!threadId || !usage) {
+      return null;
+    }
+    this.threadTokenUsageById[threadId] = usage;
+    return usage;
   }
 
   handleServerRequest(message) {
@@ -525,6 +606,33 @@ class CodexAppServerClient {
     });
     this.currentThread = result.thread;
     return result.thread;
+  }
+
+  async refreshThreadTokenUsage(threadId = this.currentThread?.id) {
+    if (!threadId) {
+      return null;
+    }
+
+    let thread = this.currentThread?.id === threadId ? this.currentThread : null;
+    if (!thread?.path) {
+      try {
+        const result = await this.request("thread/read", { threadId, includeTurns: false });
+        thread = result?.thread || thread;
+      } catch (error) {
+        sendToRenderer("codex:server-log", `Failed to read thread token usage path: ${error.message}`);
+      }
+    }
+
+    try {
+      const usage = await latestTokenUsageFromRollout(thread?.path);
+      if (usage) {
+        return this.rememberThreadTokenUsage(threadId, usage);
+      }
+    } catch (error) {
+      sendToRenderer("codex:server-log", `Failed to refresh thread token usage: ${error.message}`);
+    }
+
+    return this.threadTokenUsageById[threadId] || null;
   }
 
   async archiveThread(threadId) {
@@ -914,6 +1022,7 @@ ipcMain.handle("app:get-state", async () => {
     workspaceIsFallback: workspaceInfo.fallback,
     account,
     rateLimits: codexClient?.rateLimits || null,
+    threadTokenUsageById: codexClient?.threadTokenUsageById || {},
     models,
     uiConfig: readUiConfig(),
     version: APP_VERSION,
@@ -922,6 +1031,7 @@ ipcMain.handle("app:get-state", async () => {
 
 ipcMain.handle("thread:new", async () => codexClient.startThread());
 ipcMain.handle("thread:resume", async (_event, threadId) => codexClient.resumeThread(threadId));
+ipcMain.handle("thread:refresh-token-usage", async (_event, threadId) => codexClient.refreshThreadTokenUsage(threadId));
 ipcMain.handle("thread:archive", async (_event, threadId) => codexClient.archiveThread(threadId));
 ipcMain.handle("thread:rollback", async (_event, payload) => codexClient.rollbackThread(payload?.numTurns || 0));
 ipcMain.handle("turn:start", async (_event, payload) => codexClient.sendMessage(payload.text, payload.options || {}));

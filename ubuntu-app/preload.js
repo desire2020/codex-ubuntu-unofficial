@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   getState: () => ipcRenderer.invoke("app:get-state"),
   newThread: () => ipcRenderer.invoke("thread:new"),
   resumeThread: (threadId) => ipcRenderer.invoke("thread:resume", threadId),
+  refreshThreadTokenUsage: (threadId) => ipcRenderer.invoke("thread:refresh-token-usage", threadId),
   archiveThread: (threadId) => ipcRenderer.invoke("thread:archive", threadId),
   rollbackThread: (payload) => ipcRenderer.invoke("thread:rollback", payload),
   startTurn: (payload) => ipcRenderer.invoke("turn:start", payload),

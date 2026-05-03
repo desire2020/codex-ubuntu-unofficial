@@ -59,6 +59,7 @@ let markdownRenderer;
 let conversationRenderScheduled = false;
 let conversationRenderShouldStick = false;
 let runtimeTickerId = null;
+const tokenUsageRefreshInFlight = new Set();
 const CODE_PREVIEW_LINES = 3;
 const TEXT_CODE_LANGUAGES = new Set(["text", "txt", "plain", "plaintext", "markdown", "md"]);
 
@@ -1247,6 +1248,7 @@ function renderSidebar() {
       state.messages = threadToMessages(thread);
       state.threadTitle = threadDisplayTitle(thread);
       renderAll();
+      refreshThreadTokenUsage(thread.id, { force: true });
     });
     button.addEventListener("contextmenu", (event) => {
       const thread = state.threads.find((item) => item.id === button.dataset.thread);
@@ -1566,8 +1568,8 @@ function renderTokenUsageSettings() {
 }
 
 function renderContextUsage(usage) {
-  const totalTokens = usage?.total?.totalTokens || 0;
-  const contextWindow = usage?.modelContextWindow || 0;
+  const totalTokens = effectiveContextTokens(usage);
+  const contextWindow = contextWindowForUsage(usage);
   const percent = contextWindow > 0 ? Math.min(100, Math.max(0, (totalTokens / contextWindow) * 100)) : 0;
   if (els.settingsContextUsageBar) {
     els.settingsContextUsageBar.style.width = `${percent}%`;
@@ -1590,9 +1592,92 @@ function emptyTokenUsage() {
   };
 }
 
+function numericTokenValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function normalizeTokenUsageBreakdown(value = {}) {
+  return {
+    totalTokens: numericTokenValue(value.totalTokens ?? value.total_tokens),
+    inputTokens: numericTokenValue(value.inputTokens ?? value.input_tokens),
+    cachedInputTokens: numericTokenValue(value.cachedInputTokens ?? value.cached_input_tokens),
+    outputTokens: numericTokenValue(value.outputTokens ?? value.output_tokens),
+    reasoningOutputTokens: numericTokenValue(value.reasoningOutputTokens ?? value.reasoning_output_tokens),
+  };
+}
+
+function normalizeThreadTokenUsage(value) {
+  if (!value) {
+    return null;
+  }
+  const total = value.total || value.total_token_usage;
+  const last = value.last || value.last_token_usage;
+  if (!total || !last) {
+    return null;
+  }
+  const contextWindow = numericTokenValue(value.modelContextWindow ?? value.model_context_window);
+  return {
+    total: normalizeTokenUsageBreakdown(total),
+    last: normalizeTokenUsageBreakdown(last),
+    modelContextWindow: contextWindow > 0 ? contextWindow : null,
+  };
+}
+
+function rememberThreadTokenUsage(threadId, tokenUsage) {
+  const usage = normalizeThreadTokenUsage(tokenUsage);
+  if (!threadId || !usage) {
+    return null;
+  }
+  state.threadTokenUsageById[threadId] = usage;
+  return usage;
+}
+
 function currentThreadTokenUsage() {
   const threadId = state.currentThread?.id;
   return threadId ? state.threadTokenUsageById[threadId] || null : null;
+}
+
+function effectiveContextTokens(usage) {
+  return usage?.last?.totalTokens || usage?.total?.totalTokens || 0;
+}
+
+function contextWindowForUsage(usage) {
+  const usageWindow = numericTokenValue(usage?.modelContextWindow);
+  if (usageWindow > 0) {
+    return usageWindow;
+  }
+  const configuredWindow = numericTokenValue(state.configRead?.config?.model_context_window);
+  return configuredWindow > 0 ? configuredWindow : 0;
+}
+
+async function refreshThreadTokenUsage(threadId, { force = false } = {}) {
+  if (!threadId || tokenUsageRefreshInFlight.has(threadId)) {
+    return null;
+  }
+  if (!force && state.threadTokenUsageById[threadId]) {
+    return state.threadTokenUsageById[threadId];
+  }
+
+  tokenUsageRefreshInFlight.add(threadId);
+  try {
+    const usage = await window.codexDesktop.refreshThreadTokenUsage(threadId);
+    if (usage) {
+      rememberThreadTokenUsage(threadId, usage);
+      renderContextMeter();
+      renderTokenUsageSettings();
+    }
+    return usage;
+  } catch (error) {
+    console.debug("Failed to refresh token usage", error);
+    return null;
+  } finally {
+    tokenUsageRefreshInFlight.delete(threadId);
+  }
+}
+
+function refreshCurrentThreadTokenUsage(options = {}) {
+  return refreshThreadTokenUsage(state.currentThread?.id, options);
 }
 
 function formatCount(value) {
@@ -2167,8 +2252,8 @@ function renderModelControls() {
 
 function contextUsageStats() {
   const usage = currentThreadTokenUsage();
-  const totalTokens = usage?.total?.totalTokens || 0;
-  const contextWindow = usage?.modelContextWindow || 0;
+  const totalTokens = effectiveContextTokens(usage);
+  const contextWindow = contextWindowForUsage(usage);
   if (!contextWindow || contextWindow <= 0) {
     return { available: false, totalTokens, contextWindow, percent: 0 };
   }
@@ -3283,7 +3368,7 @@ async function refreshState() {
   state.serverReady = next.serverReady;
   state.uiConfig = uiConfig;
   state.optimisticThreads = optimisticThreads;
-  state.threadTokenUsageById = threadTokenUsageById;
+  state.threadTokenUsageById = { ...threadTokenUsageById, ...(next.threadTokenUsageById || {}) };
   state.rateLimits = rateLimits;
   state.rateLimitsLoadedAt = rateLimitsLoadedAt;
   state.threads = mergeOptimisticThreads(next.threads);
@@ -3291,6 +3376,7 @@ async function refreshState() {
   state.selectedModel = uiConfig.selectedModel || "";
   state.selectedEffort = uiConfig.selectedEffort || "";
   renderAll();
+  refreshCurrentThreadTokenUsage();
 }
 
 async function loadRateLimits({ force = false } = {}) {
@@ -3328,6 +3414,7 @@ function maybeLoadUsageData({ force = false } = {}) {
     return;
   }
   loadRateLimits({ force });
+  refreshCurrentThreadTokenUsage({ force });
 }
 
 function appendMessage(role, text, extra = {}) {
@@ -3676,7 +3763,7 @@ window.codexDesktop.onEvent(({ method, params }) => {
     renderGit();
   } else if (method === "thread/tokenUsage/updated") {
     if (params.threadId && params.tokenUsage) {
-      state.threadTokenUsageById[params.threadId] = params.tokenUsage;
+      rememberThreadTokenUsage(params.threadId, params.tokenUsage);
     }
     renderSettings();
     renderModelControls();
@@ -3694,6 +3781,7 @@ window.codexDesktop.onEvent(({ method, params }) => {
     state.currentTurnId = null;
     state.currentTurnStartedAt = null;
     renderConversation();
+    refreshThreadTokenUsage(params.threadId || state.currentThread?.id, { force: true });
     window.codexDesktop.refreshGit().then((git) => {
       state.git = git;
       renderGit();
