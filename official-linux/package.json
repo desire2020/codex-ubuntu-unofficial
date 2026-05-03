@@ -1,7 +1,7 @@
 {
   "name": "codex-desktop-official-linux-packager",
   "private": true,
-  "version": "26.429.30905-ubuntu.2",
+  "version": "26.429.30905-ubuntu.12",
   "description": "Linux packaging harness for the official Codex Electron desktop bundle.",
   "scripts": {
     "build-spawn-helper": "${CXX:-x86_64-conda-linux-gnu-g++} -Wall -O2 -D_FORTIFY_SOURCE=2 node_modules/node-pty/src/unix/spawn-helper.cc -o node_modules/node-pty/build/Release/spawn-helper",
