@@ -95,6 +95,10 @@
               <div class="spacer"></div>
               <div class="model-control">
                 <button type="button" class="model-choice" id="modelChoice"><span class="icon bolt"></span><span id="modelChoiceLabel">Model</span></button>
+                <div class="context-meter-mini" id="contextMeterMini" title="Context usage">
+                  <span class="context-meter-bar" aria-hidden="true"><span id="contextMeterFill"></span></span>
+                  <span id="contextMeterLabel">CTX --</span>
+                </div>
                 <div class="model-menu hidden" id="modelMenu"></div>
               </div>
               <div class="effort-buttons hidden" id="effortButtons" aria-label="Reasoning effort"></div>
@@ -381,8 +385,50 @@
                     <strong>Plan usage</strong>
                     <span id="settingsUsageDetail">Usage details open in your OpenAI account</span>
                   </div>
-                  <button id="settingsOpenUsage">View usage</button>
+                  <div class="settings-actions">
+                    <button id="settingsRefreshUsage">Refresh</button>
+                    <button id="settingsOpenUsage">View usage</button>
+                  </div>
                 </div>
+              </section>
+
+              <section class="settings-section">
+                <div class="settings-section-title" id="settingsRateLimitTitle">Rate limits</div>
+                <div class="settings-description" id="settingsRateLimitStatus"></div>
+                <div class="usage-card-list" id="settingsRateLimitCards"></div>
+              </section>
+
+              <section class="settings-section">
+                <div class="settings-section-title" id="settingsTokenUsageTitle">Current chat tokens</div>
+                <div class="settings-description" id="settingsTokenUsageStatus"></div>
+                <div class="usage-meter">
+                  <div class="usage-meter-row">
+                    <span id="settingsContextUsageLabel">Context window</span>
+                    <span id="settingsContextUsageDetail"></span>
+                  </div>
+                  <div class="usage-progress" aria-hidden="true">
+                    <span id="settingsContextUsageBar"></span>
+                  </div>
+                </div>
+                <div class="usage-grid">
+                  <div class="usage-card">
+                    <span id="settingsTokenTotalLabel">Total</span>
+                    <strong id="settingsTokenTotal">0</strong>
+                  </div>
+                  <div class="usage-card">
+                    <span id="settingsTokenInputLabel">Input</span>
+                    <strong id="settingsTokenInput">0</strong>
+                  </div>
+                  <div class="usage-card">
+                    <span id="settingsTokenOutputLabel">Output</span>
+                    <strong id="settingsTokenOutput">0</strong>
+                  </div>
+                  <div class="usage-card">
+                    <span id="settingsTokenReasoningLabel">Reasoning</span>
+                    <strong id="settingsTokenReasoning">0</strong>
+                  </div>
+                </div>
+                <div class="usage-breakdown" id="settingsTokenLastTurn"></div>
               </section>
 
               <section class="settings-section">

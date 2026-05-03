@@ -1,6 +1,6 @@
 {
   "name": "codex-ubuntu-desktop",
-  "version": "0.1.29",
+  "version": "0.1.37",
   "private": true,
   "description": "Unofficial Ubuntu desktop client for Codex.",
   "main": "main.js",

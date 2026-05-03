@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 pkg="codex-desktop-ubuntu"
-version="0.1.29+ubuntu.1"
+version="0.1.37+ubuntu.1"
 arch="$(dpkg --print-architecture)"
 root="$repo_root/dist/deb-root"
 out="$repo_root/dist/${pkg}_${version}_${arch}.deb"
@@ -42,6 +42,8 @@ install -m 0644 "$repo_root/ubuntu-app/styles.css" "$root/opt/codex-desktop-ubun
 install -m 0644 "$repo_root/ubuntu-app/main.js" "$root/opt/codex-desktop-ubuntu/app/main.js"
 install -m 0644 "$repo_root/ubuntu-app/preload.js" "$root/opt/codex-desktop-ubuntu/app/preload.js"
 install -m 0644 "$repo_root/ubuntu-app/renderer.js" "$root/opt/codex-desktop-ubuntu/app/renderer.js"
+install -d "$root/opt/codex-desktop-ubuntu/app/assets"
+install -m 0644 "$repo_root/ubuntu-app/assets/pencil-inverted.png" "$root/opt/codex-desktop-ubuntu/app/assets/pencil-inverted.png"
 install -d "$root/opt/codex-desktop-ubuntu/app/vendor"
 install -m 0644 "$repo_root/ubuntu-app/vendor/markdown-it.min.js" "$root/opt/codex-desktop-ubuntu/app/vendor/markdown-it.min.js"
 

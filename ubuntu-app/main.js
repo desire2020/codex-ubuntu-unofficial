@@ -1,11 +1,11 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require("electron");
 const { spawn, execFile } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
 
-const APP_VERSION = "0.1.29";
+const APP_VERSION = "0.1.37";
 const CLIENT_INFO = {
   name: "codex_ubuntu_desktop",
   title: "Codex Ubuntu Desktop",
@@ -478,6 +478,9 @@ class CodexAppServerClient {
     if (method === "thread/started") {
       this.currentThread = params.thread;
     }
+    if (method === "account/rateLimits/updated") {
+      this.rateLimits = { rateLimits: params.rateLimits, rateLimitsByLimitId: null };
+    }
     sendToRenderer("codex:event", { method, params });
   }
 
@@ -687,6 +690,13 @@ class CodexAppServerClient {
   async logout() {
     const result = await this.request("account/logout");
     this.accountState = null;
+    this.rateLimits = null;
+    return result;
+  }
+
+  async readRateLimits() {
+    const result = await this.request("account/rateLimits/read");
+    this.rateLimits = result;
     return result;
   }
 
@@ -903,6 +913,7 @@ ipcMain.handle("app:get-state", async () => {
     projects: listProjects(workspace),
     workspaceIsFallback: workspaceInfo.fallback,
     account,
+    rateLimits: codexClient?.rateLimits || null,
     models,
     uiConfig: readUiConfig(),
     version: APP_VERSION,
@@ -919,12 +930,17 @@ ipcMain.handle("git:refresh", async () => (workspaceIsFallback ? emptyGitState()
 ipcMain.handle("account:login", async (_event, payload) => codexClient.login(payload || {}));
 ipcMain.handle("account:cancel-login", async (_event, loginId) => codexClient.cancelLogin(loginId));
 ipcMain.handle("account:logout", async () => codexClient.logout());
+ipcMain.handle("account:rate-limits", async () => codexClient.readRateLimits());
 ipcMain.handle("config:read", async () => codexClient.readConfig());
 ipcMain.handle("config:value-write", async (_event, payload) => codexClient.writeConfigValue(payload || {}));
 ipcMain.handle("config:open-user", async () => openUserConfigToml());
 ipcMain.handle("ui-config:update", async (_event, patch) => writeUiConfig(patch || {}));
 ipcMain.handle("file:read-link", async (_event, href) => readLinkedFile(href));
 ipcMain.handle("shell:open-external", async (_event, url) => shell.openExternal(url));
+ipcMain.handle("clipboard:write-text", async (_event, text) => {
+  clipboard.writeText(String(text ?? ""));
+  return { ok: true };
+});
 ipcMain.handle("licenses:open", async () => openLicenseNotices());
 ipcMain.handle("memory:preferences-update", async (_event, payload) => codexClient.setMemoryPreferences(payload || {}));
 ipcMain.handle("memory:reset", async () => codexClient.resetMemories());

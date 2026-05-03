@@ -6,6 +6,7 @@ const state = {
   account: null,
   currentThread: null,
   currentTurnId: null,
+  currentTurnStartedAt: null,
   assistantItemId: null,
   messages: [],
   git: {
@@ -18,6 +19,11 @@ const state = {
   pendingApproval: null,
   authLogin: null,
   fileDetail: null,
+  rateLimits: null,
+  rateLimitsLoading: false,
+  rateLimitsError: "",
+  rateLimitsLoadedAt: 0,
+  threadTokenUsageById: {},
   uiConfig: {
     reviewOpen: false,
     selectedModel: "",
@@ -52,12 +58,18 @@ const state = {
 let markdownRenderer;
 let conversationRenderScheduled = false;
 let conversationRenderShouldStick = false;
+let runtimeTickerId = null;
+const CODE_PREVIEW_LINES = 3;
+const TEXT_CODE_LANGUAGES = new Set(["text", "txt", "plain", "plaintext", "markdown", "md"]);
 
 const els = {
   branchName: document.getElementById("branchName"),
   commitButton: document.getElementById("commitButton"),
   commitMenu: document.getElementById("commitMenu"),
   conversation: document.getElementById("conversation"),
+  contextMeterFill: document.getElementById("contextMeterFill"),
+  contextMeterLabel: document.getElementById("contextMeterLabel"),
+  contextMeterMini: document.getElementById("contextMeterMini"),
   contextMenu: document.getElementById("contextMenu"),
   diffViewer: document.getElementById("diffViewer"),
   emptyState: document.getElementById("emptyState"),
@@ -130,12 +142,30 @@ const els = {
   settingsRawConfig: document.getElementById("settingsRawConfig"),
   settingsRequireCtrlEnter: document.getElementById("settingsRequireCtrlEnter"),
   settingsResetMemories: document.getElementById("settingsResetMemories"),
+  settingsRateLimitCards: document.getElementById("settingsRateLimitCards"),
+  settingsRateLimitStatus: document.getElementById("settingsRateLimitStatus"),
+  settingsRateLimitTitle: document.getElementById("settingsRateLimitTitle"),
+  settingsRefreshUsage: document.getElementById("settingsRefreshUsage"),
   settingsReviewOpen: document.getElementById("settingsReviewOpen"),
   settingsSaveConfig: document.getElementById("settingsSaveConfig"),
   settingsSavePersonalization: document.getElementById("settingsSavePersonalization"),
   settingsLogout: document.getElementById("settingsLogout"),
   settingsSkipToolMemories: document.getElementById("settingsSkipToolMemories"),
   settingsSpeed: document.getElementById("settingsSpeed"),
+  settingsContextUsageBar: document.getElementById("settingsContextUsageBar"),
+  settingsContextUsageDetail: document.getElementById("settingsContextUsageDetail"),
+  settingsContextUsageLabel: document.getElementById("settingsContextUsageLabel"),
+  settingsTokenInput: document.getElementById("settingsTokenInput"),
+  settingsTokenInputLabel: document.getElementById("settingsTokenInputLabel"),
+  settingsTokenLastTurn: document.getElementById("settingsTokenLastTurn"),
+  settingsTokenOutput: document.getElementById("settingsTokenOutput"),
+  settingsTokenOutputLabel: document.getElementById("settingsTokenOutputLabel"),
+  settingsTokenReasoning: document.getElementById("settingsTokenReasoning"),
+  settingsTokenReasoningLabel: document.getElementById("settingsTokenReasoningLabel"),
+  settingsTokenTotal: document.getElementById("settingsTokenTotal"),
+  settingsTokenTotalLabel: document.getElementById("settingsTokenTotalLabel"),
+  settingsTokenUsageStatus: document.getElementById("settingsTokenUsageStatus"),
+  settingsTokenUsageTitle: document.getElementById("settingsTokenUsageTitle"),
   settingsUsageDetail: document.getElementById("settingsUsageDetail"),
   settingsVersion: document.getElementById("settingsVersion"),
   settingsViewLicenses: document.getElementById("settingsViewLicenses"),
@@ -203,6 +233,9 @@ const I18N = {
     "composer.model": "Model",
     "composer.reasoningEffort": "Reasoning effort",
     "composer.speed": "Speed",
+    "composer.contextUsage": "Context usage",
+    "composer.contextUsageDetail": "{percent}% of effective context used",
+    "composer.contextUnknown": "Context usage unavailable",
     "model.sectionModel": "Model",
     "model.sectionEffort": "Reasoning effort",
     "model.sectionSpeed": "Speed",
@@ -309,6 +342,33 @@ const I18N = {
     "settings.usageSignedIn": "Usage details open in your OpenAI account",
     "settings.usageSignedOut": "Sign in to view usage",
     "settings.viewUsage": "View usage",
+    "settings.refreshUsage": "Refresh",
+    "settings.rateLimits": "Rate limits",
+    "settings.rateLimitsLoading": "Loading rate limits...",
+    "settings.rateLimitsUnavailable": "ChatGPT rate limit data is not available for this auth mode.",
+    "settings.rateLimitsError": "Could not load rate limits: {error}",
+    "settings.rateLimitsUpdated": "Updated {time}",
+    "settings.rateLimitReached": "Limit reached: {type}",
+    "settings.primary": "Primary",
+    "settings.secondary": "Secondary",
+    "settings.rateLimitWindow": "{name} window",
+    "settings.rateLimitReset": "resets {time}",
+    "settings.rateLimitNoReset": "reset time unavailable",
+    "settings.credits": "Credits",
+    "settings.creditsUnlimited": "Credits are unlimited",
+    "settings.creditsAvailable": "Credits available",
+    "settings.creditsUnavailable": "Credits unavailable",
+    "settings.currentChatTokens": "Current chat tokens",
+    "settings.tokenUsageEmpty": "No token usage has been reported for this chat yet.",
+    "settings.tokenUsageLive": "Updates after each Codex turn.",
+    "settings.contextWindow": "Context window",
+    "settings.contextWindowUnknown": "Context window unavailable",
+    "settings.total": "Total",
+    "settings.input": "Input",
+    "settings.cached": "cached",
+    "settings.output": "Output",
+    "settings.reasoning": "Reasoning",
+    "settings.lastTurn": "Last turn",
     "settings.localEnvironment": "Local environment",
     "settings.workspace": "Workspace",
     "settings.change": "Change",
@@ -378,6 +438,9 @@ const I18N = {
     "change.noChanges": "No file changes",
     "change.moreFiles": "{count} more files",
     "change.undo": "Undo",
+    "activity.title": "Work details",
+    "activity.completedTitle": "Work details for this reply",
+    "activity.items": "{count} items",
     "message.copy": "Copy this message",
     "message.editRegenerate": "Edit and regenerate from here",
     "editTurn.title": "Edit and regenerate",
@@ -389,6 +452,7 @@ const I18N = {
     "editTurn.failed": "Regenerate failed: {error}",
     "code.copy": "Copy",
     "code.copied": "Copied",
+    "code.copyFailed": "Copy failed",
     "code.code": "Code",
     "code.output": "Output",
     "code.command": "Command",
@@ -398,6 +462,7 @@ const I18N = {
     "code.line": "1 line",
     "code.lines": "{count} lines",
     "reasoning.title": "Thinking",
+    "reasoning.ideaTitle": "Thought: {title}",
     "reasoning.inProgress": "Thinking",
     "reasoning.waiting": "Preparing reasoning summary...",
     "reasoning.active": "Codex is working...",
@@ -405,6 +470,11 @@ const I18N = {
     "reasoning.notes": "{count} notes",
     "reasoning.noNotes": "No summary",
     "reasoning.none": "No readable reasoning summary was emitted.",
+    "context.compacted": "Context compressed",
+    "context.compactedDetail": "Earlier conversation was summarized so Codex can continue with more room.",
+    "runtime.running": "Working {duration}",
+    "runtime.waiting": "Waiting {duration}",
+    "runtime.completed": "Took {duration}",
     "age.minute": "{count}m",
     "age.hour": "{count}h",
     "age.day": "{count}d",
@@ -448,6 +518,9 @@ const I18N = {
     "composer.model": "模型",
     "composer.reasoningEffort": "推理强度",
     "composer.speed": "速度",
+    "composer.contextUsage": "上下文用量",
+    "composer.contextUsageDetail": "已使用 {percent}% 有效上下文",
+    "composer.contextUnknown": "上下文用量不可用",
     "model.sectionModel": "模型",
     "model.sectionEffort": "推理强度",
     "model.sectionSpeed": "速度",
@@ -554,6 +627,33 @@ const I18N = {
     "settings.usageSignedIn": "在你的 OpenAI 账号中查看用量详情",
     "settings.usageSignedOut": "登录后查看用量",
     "settings.viewUsage": "查看用量",
+    "settings.refreshUsage": "刷新",
+    "settings.rateLimits": "额度限制",
+    "settings.rateLimitsLoading": "正在加载额度限制...",
+    "settings.rateLimitsUnavailable": "当前鉴权模式不提供 ChatGPT 额度窗口数据。",
+    "settings.rateLimitsError": "无法加载额度限制：{error}",
+    "settings.rateLimitsUpdated": "更新于 {time}",
+    "settings.rateLimitReached": "已达到限制：{type}",
+    "settings.primary": "主要",
+    "settings.secondary": "次要",
+    "settings.rateLimitWindow": "{name} 窗口",
+    "settings.rateLimitReset": "{time} 重置",
+    "settings.rateLimitNoReset": "重置时间不可用",
+    "settings.credits": "额度",
+    "settings.creditsUnlimited": "额度无限",
+    "settings.creditsAvailable": "额度可用",
+    "settings.creditsUnavailable": "额度不可用",
+    "settings.currentChatTokens": "当前聊天 token",
+    "settings.tokenUsageEmpty": "这个聊天还没有收到 token 用量。",
+    "settings.tokenUsageLive": "每个 Codex turn 结束后更新。",
+    "settings.contextWindow": "上下文窗口",
+    "settings.contextWindowUnknown": "上下文窗口不可用",
+    "settings.total": "总计",
+    "settings.input": "输入",
+    "settings.cached": "缓存",
+    "settings.output": "输出",
+    "settings.reasoning": "推理",
+    "settings.lastTurn": "最近 turn",
     "settings.localEnvironment": "本地环境",
     "settings.workspace": "工作区",
     "settings.change": "更改",
@@ -623,6 +723,9 @@ const I18N = {
     "change.noChanges": "没有文件更改",
     "change.moreFiles": "还有 {count} 个文件",
     "change.undo": "撤销",
+    "activity.title": "工作细节",
+    "activity.completedTitle": "本次回复的工作细节",
+    "activity.items": "{count} 项",
     "message.copy": "复制本条内容",
     "message.editRegenerate": "从这里编辑并重新生成",
     "editTurn.title": "编辑并重新生成",
@@ -634,6 +737,7 @@ const I18N = {
     "editTurn.failed": "重新生成失败：{error}",
     "code.copy": "复制",
     "code.copied": "已复制",
+    "code.copyFailed": "复制失败",
     "code.code": "代码",
     "code.output": "输出",
     "code.command": "命令",
@@ -643,6 +747,7 @@ const I18N = {
     "code.line": "1 行",
     "code.lines": "{count} 行",
     "reasoning.title": "思考过程",
+    "reasoning.ideaTitle": "思路：{title}",
     "reasoning.inProgress": "正在推理",
     "reasoning.waiting": "正在准备推理摘要...",
     "reasoning.active": "Codex 正在工作...",
@@ -650,6 +755,11 @@ const I18N = {
     "reasoning.notes": "{count} 条摘要",
     "reasoning.noNotes": "无摘要",
     "reasoning.none": "没有收到可读推理摘要。",
+    "context.compacted": "上下文已压缩",
+    "context.compactedDetail": "较早的对话已被摘要，以便 Codex 继续保留更多可用空间。",
+    "runtime.running": "工作中 {duration}",
+    "runtime.waiting": "等待中 {duration}",
+    "runtime.completed": "耗时 {duration}",
     "age.minute": "{count} 分钟",
     "age.hour": "{count} 小时",
     "age.day": "{count} 天",
@@ -741,9 +851,9 @@ const STATIC_TEXT = [
   ["#settingsPaneUsage .settings-section:nth-child(1) .settings-section-title", "settings.account"],
   ["#settingsPaneUsage .settings-row:nth-child(2) strong", "settings.planUsage"],
   ["#settingsOpenUsage", "settings.viewUsage"],
-  ["#settingsPaneUsage .settings-section:nth-child(2) .settings-section-title", "settings.localEnvironment"],
+  ["#settingsPaneUsage .settings-section:nth-child(4) .settings-section-title", "settings.localEnvironment"],
   ["#settingsChooseWorkspace", "settings.change"],
-  ["#settingsPaneUsage .runtime-row strong", "settings.codexBinary"],
+  ["#settingsPaneUsage .settings-section:nth-child(4) .runtime-row strong", "settings.codexBinary"],
   ["#settingsPanePlugins .settings-plugin-header > strong", "settings.pluginsHeader"],
   ["#settingsPluginBuiltBy option:nth-child(1)", "settings.builtByOpenAI"],
   ["#settingsPluginBuiltBy option:nth-child(2)", "settings.allBuilders"],
@@ -838,6 +948,38 @@ function basename(value) {
   return String(value || "").split("/").filter(Boolean).pop() || value || "workspace";
 }
 
+function cleanTitleText(value) {
+  return String(value || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/[#*_>\-[\](){}]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function summarizeTitle(value) {
+  const cleaned = cleanTitleText(value)
+    .replace(/^(please|can you|could you|i want you to|帮我|请你?|麻烦你?)\s*/i, "")
+    .trim();
+  if (!cleaned) {
+    return "";
+  }
+  const sentence = cleaned.split(/(?<=[。！？!?])\s+|[。！？!?]\s*|\n/).find(Boolean) || cleaned;
+  const words = sentence.split(/\s+/).filter(Boolean);
+  if (words.length > 10 && !/[\u3400-\u9fff]/.test(sentence)) {
+    return `${words.slice(0, 10).join(" ")}...`;
+  }
+  const chars = [...sentence];
+  return chars.length > 42 ? `${chars.slice(0, 42).join("").trim()}...` : sentence;
+}
+
+function threadDisplayTitle(thread) {
+  if (!thread) {
+    return t("sidebar.untitled");
+  }
+  return summarizeTitle(thread.name || thread.title || thread.preview || thread.displayTitle) || t("sidebar.untitled");
+}
+
 function formatAge(timestamp) {
   if (!timestamp) {
     return "";
@@ -853,6 +995,146 @@ function formatAge(timestamp) {
     return t("age.day", { count: Math.floor(seconds / 86400) });
   }
   return t("age.month", { count: Math.floor(seconds / (86400 * 30)) });
+}
+
+function timestampToMs(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+  return numeric > 100_000_000_000 ? numeric : numeric * 1000;
+}
+
+function durationValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
+}
+
+function turnRuntimeMeta(turn, { fallbackStartedAt = null } = {}) {
+  const startedAt = timestampToMs(turn?.startedAt) || fallbackStartedAt || null;
+  const completedAt = timestampToMs(turn?.completedAt);
+  const durationMs = durationValue(turn?.durationMs) ?? (startedAt && completedAt ? completedAt - startedAt : null);
+  return {
+    turnStartedAt: startedAt,
+    turnCompletedAt: completedAt,
+    turnDurationMs: durationMs,
+  };
+}
+
+function applyTurnRuntime(message, meta = {}) {
+  if (!message) {
+    return message;
+  }
+  if (meta.turnStartedAt && !message.turnStartedAt) {
+    message.turnStartedAt = meta.turnStartedAt;
+  }
+  if (meta.turnCompletedAt) {
+    message.turnCompletedAt = meta.turnCompletedAt;
+  }
+  const durationMs = durationValue(meta.turnDurationMs);
+  if (durationMs !== null) {
+    message.turnDurationMs = durationMs;
+  }
+  if (message.turnId) {
+    delete message.queuedAt;
+  }
+  message.updatedAt = Date.now();
+  return message;
+}
+
+function applyTurnRuntimeToMessages(turnId, meta = {}) {
+  if (!turnId) {
+    return;
+  }
+  state.messages.forEach((message) => {
+    if (message.turnId === turnId) {
+      applyTurnRuntime(message, meta);
+    }
+  });
+}
+
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  if (minutes > 0) {
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${seconds}s`;
+}
+
+function runtimeDescriptor(message) {
+  if (!message) {
+    return { label: "", live: false, waiting: false };
+  }
+  const now = Date.now();
+  const queuedAt = timestampToMs(message.queuedAt);
+  if (!message.turnId && queuedAt) {
+    return {
+      label: t("runtime.waiting", { duration: formatDuration(now - queuedAt) }),
+      live: true,
+      waiting: true,
+    };
+  }
+
+  const startedAt = timestampToMs(message.turnStartedAt || message.startedAt);
+  const completedAt = timestampToMs(message.turnCompletedAt || message.completedAt);
+  let durationMs =
+    durationValue(message.turnDurationMs) ?? durationValue(message.durationMs) ?? durationValue(message.itemDurationMs);
+  if (durationMs === null && startedAt && completedAt) {
+    durationMs = completedAt - startedAt;
+  }
+  if (message.turnId && state.currentTurnId === message.turnId && !completedAt && startedAt) {
+    return {
+      label: t("runtime.running", { duration: formatDuration(now - startedAt) }),
+      live: true,
+      waiting: false,
+    };
+  }
+  if (durationMs !== null) {
+    return {
+      label: t("runtime.completed", { duration: formatDuration(durationMs) }),
+      live: false,
+      waiting: false,
+    };
+  }
+  return { label: "", live: false, waiting: false };
+}
+
+function hasLiveRuntime() {
+  return state.messages.some((message) => runtimeDescriptor(message).live);
+}
+
+function refreshRuntimeLabels() {
+  els.conversation.querySelectorAll("[data-message-runtime-index]").forEach((node) => {
+    const index = Number.parseInt(node.dataset.messageRuntimeIndex || "-1", 10);
+    const descriptor = runtimeDescriptor(state.messages[index]);
+    node.textContent = descriptor.label;
+    node.classList.toggle("hidden", !descriptor.label);
+    node.classList.toggle("is-live", descriptor.live);
+    node.classList.toggle("is-waiting", descriptor.waiting);
+  });
+  syncRuntimeTicker();
+}
+
+function syncRuntimeTicker() {
+  if (hasLiveRuntime()) {
+    if (!runtimeTickerId) {
+      runtimeTickerId = setInterval(refreshRuntimeLabels, 1000);
+    }
+    return;
+  }
+  if (runtimeTickerId) {
+    clearInterval(runtimeTickerId);
+    runtimeTickerId = null;
+  }
 }
 
 function renderAll() {
@@ -873,6 +1155,7 @@ function normalizeThreadForList(thread) {
   return {
     ...thread,
     preview: thread.preview || thread.name || t("nav.newChat"),
+    displayTitle: threadDisplayTitle(thread),
     createdAt: thread.createdAt || now,
     updatedAt: thread.updatedAt || thread.createdAt || now,
   };
@@ -919,6 +1202,24 @@ function resetActiveThreadForWorkspaceSwitch(workspace) {
   state.optimisticThreads = [];
 }
 
+function applyThreadTitle(threadId, title) {
+  if (!threadId || !title) {
+    return;
+  }
+  const apply = (thread) => {
+    if (thread.id !== threadId) {
+      return thread;
+    }
+    return normalizeThreadForList({ ...thread, name: title, preview: thread.preview || title });
+  };
+  state.threads = state.threads.map(apply);
+  state.optimisticThreads = state.optimisticThreads.map(apply);
+  if (state.currentThread?.id === threadId) {
+    state.currentThread = { ...state.currentThread, name: title, preview: state.currentThread.preview || title };
+    state.threadTitle = summarizeTitle(title);
+  }
+}
+
 function renderSidebar() {
   const visibleThreads = state.threads;
   const pinnedThreadSet = new Set(pinnedThreadIds());
@@ -944,7 +1245,7 @@ function renderSidebar() {
       state.currentThread = thread;
       state.draftThreadId = null;
       state.messages = threadToMessages(thread);
-      state.threadTitle = thread.name || thread.preview || "Codex";
+      state.threadTitle = threadDisplayTitle(thread);
       renderAll();
     });
     button.addEventListener("contextmenu", (event) => {
@@ -1014,7 +1315,7 @@ function threadButton(thread, pinned) {
   return `
     <button class="row-button ${active ? "active" : ""}" data-thread="${escapeHtml(thread.id)}" data-pinned="${pinned ? "true" : "false"}">
       <span class="icon ${pinned ? "review" : "pen"}"></span>
-      <span class="label">${escapeHtml(thread.name || thread.preview || t("sidebar.untitled"))}</span>
+      <span class="label">${escapeHtml(threadDisplayTitle(thread))}</span>
       <span class="age">${formatAge(thread.updatedAt || thread.createdAt)}</span>
     </button>
   `;
@@ -1033,7 +1334,7 @@ function renderHeader() {
   const workspaceLabel = state.workspaceIsFallback ? t("workspace.chooseProject") : basename(state.workspace);
   els.workspaceName.textContent = workspaceLabel;
   els.threadTitle.textContent =
-    state.threadTitle || state.currentThread?.name || state.currentThread?.preview || "Codex";
+    state.threadTitle || (state.currentThread ? threadDisplayTitle(state.currentThread) : "Codex");
   els.branchName.textContent = state.git.branch || t("workspace.noGit");
   els.emptyTitle.textContent = state.workspaceIsFallback
     ? t("empty.chooseProject")
@@ -1137,6 +1438,7 @@ function renderPersonalizationSettings() {
 }
 
 function renderUsageSettings(account) {
+  renderUsageLabels();
   if (els.settingsAccount) {
     els.settingsAccount.textContent = accountLabel();
   }
@@ -1154,6 +1456,12 @@ function renderUsageSettings(account) {
   if (els.settingsUsageDetail) {
     els.settingsUsageDetail.textContent = account ? t("settings.usageSignedIn") : t("settings.usageSignedOut");
   }
+  if (els.settingsRefreshUsage) {
+    els.settingsRefreshUsage.textContent = t("settings.refreshUsage");
+    els.settingsRefreshUsage.disabled = state.rateLimitsLoading || account?.type !== "chatgpt";
+  }
+  renderRateLimitSettings(account);
+  renderTokenUsageSettings();
   if (els.settingsWorkspaceName) {
     els.settingsWorkspaceName.textContent = state.workspaceIsFallback ? t("settings.noProject") : basename(state.workspace);
   }
@@ -1169,6 +1477,213 @@ function renderUsageSettings(account) {
   if (els.settingsLogout) {
     els.settingsLogout.disabled = !account;
   }
+}
+
+function renderUsageLabels() {
+  if (els.settingsRateLimitTitle) {
+    els.settingsRateLimitTitle.textContent = t("settings.rateLimits");
+  }
+  if (els.settingsTokenUsageTitle) {
+    els.settingsTokenUsageTitle.textContent = t("settings.currentChatTokens");
+  }
+  if (els.settingsContextUsageLabel) {
+    els.settingsContextUsageLabel.textContent = t("settings.contextWindow");
+  }
+  if (els.settingsTokenTotalLabel) {
+    els.settingsTokenTotalLabel.textContent = t("settings.total");
+  }
+  if (els.settingsTokenInputLabel) {
+    els.settingsTokenInputLabel.textContent = t("settings.input");
+  }
+  if (els.settingsTokenOutputLabel) {
+    els.settingsTokenOutputLabel.textContent = t("settings.output");
+  }
+  if (els.settingsTokenReasoningLabel) {
+    els.settingsTokenReasoningLabel.textContent = t("settings.reasoning");
+  }
+}
+
+function renderRateLimitSettings(account) {
+  if (!els.settingsRateLimitStatus || !els.settingsRateLimitCards) {
+    return;
+  }
+  if (!account) {
+    els.settingsRateLimitStatus.textContent = t("settings.usageSignedOut");
+    els.settingsRateLimitCards.innerHTML = "";
+    return;
+  }
+  if (account.type !== "chatgpt") {
+    els.settingsRateLimitStatus.textContent = t("settings.rateLimitsUnavailable");
+    els.settingsRateLimitCards.innerHTML = "";
+    return;
+  }
+  if (state.rateLimitsLoading) {
+    els.settingsRateLimitStatus.textContent = t("settings.rateLimitsLoading");
+  } else if (state.rateLimitsError) {
+    els.settingsRateLimitStatus.textContent = t("settings.rateLimitsError", { error: state.rateLimitsError });
+  } else if (state.rateLimitsLoadedAt) {
+    els.settingsRateLimitStatus.textContent = t("settings.rateLimitsUpdated", {
+      time: new Date(state.rateLimitsLoadedAt).toLocaleTimeString(),
+    });
+  } else {
+    els.settingsRateLimitStatus.textContent = t("settings.rateLimitsLoading");
+  }
+
+  const snapshots = rateLimitSnapshots();
+  els.settingsRateLimitCards.innerHTML = snapshots.length
+    ? snapshots.map(renderRateLimitCard).join("")
+    : `<div class="settings-empty">${escapeHtml(t("settings.rateLimitsUnavailable"))}</div>`;
+}
+
+function renderTokenUsageSettings() {
+  const usage = currentThreadTokenUsage();
+  const total = usage?.total || emptyTokenUsage();
+  const last = usage?.last || emptyTokenUsage();
+  if (els.settingsTokenUsageStatus) {
+    els.settingsTokenUsageStatus.textContent = usage ? t("settings.tokenUsageLive") : t("settings.tokenUsageEmpty");
+  }
+  if (els.settingsTokenTotal) {
+    els.settingsTokenTotal.textContent = formatCount(total.totalTokens);
+  }
+  if (els.settingsTokenInput) {
+    els.settingsTokenInput.textContent = formatCount(total.inputTokens);
+  }
+  if (els.settingsTokenOutput) {
+    els.settingsTokenOutput.textContent = formatCount(total.outputTokens);
+  }
+  if (els.settingsTokenReasoning) {
+    els.settingsTokenReasoning.textContent = formatCount(total.reasoningOutputTokens);
+  }
+  renderContextUsage(usage);
+  if (els.settingsTokenLastTurn) {
+    els.settingsTokenLastTurn.innerHTML = usage
+      ? `
+        <strong>${escapeHtml(t("settings.lastTurn"))}</strong>
+        <span>${escapeHtml(tokenBreakdownText(last))}</span>
+      `
+      : "";
+  }
+}
+
+function renderContextUsage(usage) {
+  const totalTokens = usage?.total?.totalTokens || 0;
+  const contextWindow = usage?.modelContextWindow || 0;
+  const percent = contextWindow > 0 ? Math.min(100, Math.max(0, (totalTokens / contextWindow) * 100)) : 0;
+  if (els.settingsContextUsageBar) {
+    els.settingsContextUsageBar.style.width = `${percent}%`;
+  }
+  if (els.settingsContextUsageDetail) {
+    els.settingsContextUsageDetail.textContent =
+      contextWindow > 0
+        ? `${formatCount(totalTokens)} / ${formatCount(contextWindow)} (${Math.round(percent)}%)`
+        : t("settings.contextWindowUnknown");
+  }
+}
+
+function emptyTokenUsage() {
+  return {
+    totalTokens: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+  };
+}
+
+function currentThreadTokenUsage() {
+  const threadId = state.currentThread?.id;
+  return threadId ? state.threadTokenUsageById[threadId] || null : null;
+}
+
+function formatCount(value) {
+  return Number(value || 0).toLocaleString();
+}
+
+function tokenBreakdownText(usage) {
+  const breakdown = usage || emptyTokenUsage();
+  return [
+    `${t("settings.total")} ${formatCount(breakdown.totalTokens)}`,
+    `${t("settings.input")} ${formatCount(breakdown.inputTokens)}`,
+    `${t("settings.cached")} ${formatCount(breakdown.cachedInputTokens)}`,
+    `${t("settings.output")} ${formatCount(breakdown.outputTokens)}`,
+    `${t("settings.reasoning")} ${formatCount(breakdown.reasoningOutputTokens)}`,
+  ].join(" · ");
+}
+
+function rateLimitSnapshots() {
+  const rateLimits = state.rateLimits || {};
+  const byLimitId = rateLimits.rateLimitsByLimitId || null;
+  if (byLimitId && typeof byLimitId === "object") {
+    return Object.entries(byLimitId)
+      .map(([id, snapshot]) => ({ id, snapshot }))
+      .filter((entry) => entry.snapshot);
+  }
+  return rateLimits.rateLimits ? [{ id: rateLimits.rateLimits.limitId || "default", snapshot: rateLimits.rateLimits }] : [];
+}
+
+function renderRateLimitCard({ id, snapshot }) {
+  const title = snapshot.limitName || snapshot.limitId || id || "Codex";
+  const plan = snapshot.planType ? `<span>${escapeHtml(String(snapshot.planType))}</span>` : "";
+  const reached = snapshot.rateLimitReachedType
+    ? `<div class="usage-warning">${escapeHtml(t("settings.rateLimitReached", { type: snapshot.rateLimitReachedType }))}</div>`
+    : "";
+  const credits = snapshot.credits ? renderCredits(snapshot.credits) : "";
+  return `
+    <article class="usage-limit-card">
+      <div class="usage-limit-heading">
+        <strong>${escapeHtml(title)}</strong>
+        ${plan}
+      </div>
+      ${renderRateLimitWindow(t("settings.primary"), snapshot.primary)}
+      ${renderRateLimitWindow(t("settings.secondary"), snapshot.secondary)}
+      ${credits}
+      ${reached}
+    </article>
+  `;
+}
+
+function renderRateLimitWindow(name, windowInfo) {
+  if (!windowInfo) {
+    return "";
+  }
+  const percent = Math.max(0, Math.min(100, Number(windowInfo.usedPercent || 0)));
+  const reset = windowInfo.resetsAt
+    ? t("settings.rateLimitReset", { time: formatResetTime(windowInfo.resetsAt) })
+    : t("settings.rateLimitNoReset");
+  const duration = windowInfo.windowDurationMins ? `${windowInfo.windowDurationMins}m` : "";
+  return `
+    <div class="usage-window">
+      <div class="usage-meter-row">
+        <span>${escapeHtml(t("settings.rateLimitWindow", { name }))}${duration ? ` · ${escapeHtml(duration)}` : ""}</span>
+        <span>${Math.round(percent)}%</span>
+      </div>
+      <div class="usage-progress" aria-hidden="true"><span style="width: ${percent}%"></span></div>
+      <div class="usage-subtle">${escapeHtml(reset)}</div>
+    </div>
+  `;
+}
+
+function renderCredits(credits) {
+  let label = t("settings.creditsUnavailable");
+  if (credits.unlimited) {
+    label = t("settings.creditsUnlimited");
+  } else if (credits.hasCredits) {
+    label = credits.balance ? `${t("settings.creditsAvailable")}: ${credits.balance}` : t("settings.creditsAvailable");
+  }
+  return `
+    <div class="usage-credits">
+      <span>${escapeHtml(t("settings.credits"))}</span>
+      <strong>${escapeHtml(label)}</strong>
+    </div>
+  `;
+}
+
+function formatResetTime(timestamp) {
+  const ms = timestampToMs(timestamp);
+  if (!ms) {
+    return "";
+  }
+  return new Date(ms).toLocaleString();
 }
 
 function renderAppearanceSettings(selected) {
@@ -1576,6 +2091,7 @@ function renderModelControls() {
     : t("composer.model");
 
   els.modelChoiceLabel.textContent = combinedLabel;
+  renderContextMeter();
   const modelOptions = models.length
     ? models
         .map(
@@ -1647,6 +2163,40 @@ function renderModelControls() {
       saveUiConfig({ speed: button.dataset.speed }).then(renderModelControls);
     });
   });
+}
+
+function contextUsageStats() {
+  const usage = currentThreadTokenUsage();
+  const totalTokens = usage?.total?.totalTokens || 0;
+  const contextWindow = usage?.modelContextWindow || 0;
+  if (!contextWindow || contextWindow <= 0) {
+    return { available: false, totalTokens, contextWindow, percent: 0 };
+  }
+  return {
+    available: true,
+    totalTokens,
+    contextWindow,
+    percent: Math.min(100, Math.max(0, (totalTokens / contextWindow) * 100)),
+  };
+}
+
+function renderContextMeter() {
+  if (!els.contextMeterMini || !els.contextMeterFill || !els.contextMeterLabel) {
+    return;
+  }
+  const stats = contextUsageStats();
+  const rounded = Math.round(stats.percent);
+  els.contextMeterFill.style.width = `${stats.available ? rounded : 0}%`;
+  els.contextMeterLabel.textContent = stats.available ? `${rounded}%` : "CTX --";
+  els.contextMeterMini.classList.toggle("is-empty", !stats.available);
+  els.contextMeterMini.classList.toggle("is-high", stats.available && rounded >= 80);
+  els.contextMeterMini.classList.toggle("is-critical", stats.available && rounded >= 95);
+  els.contextMeterMini.setAttribute(
+    "title",
+    stats.available
+      ? t("composer.contextUsageDetail", { percent: rounded })
+      : t("composer.contextUnknown"),
+  );
 }
 
 function renderPermissionControls() {
@@ -1932,22 +2482,170 @@ function scheduleConversationRender({ stickToBottom = true } = {}) {
 function renderConversation({ forceBottom = true } = {}) {
   els.emptyState.classList.toggle("hidden", state.messages.length > 0);
   els.shell.classList.toggle("is-empty", state.messages.length === 0);
-  const html = state.messages.map(renderMessage).join("");
+  const html = renderConversationMessages();
 
   els.conversation.innerHTML = `${els.emptyState.outerHTML}${html}`;
   if (forceBottom) {
     els.conversation.scrollTop = els.conversation.scrollHeight;
   }
+  refreshRuntimeLabels();
+}
+
+function renderConversationMessages() {
+  const html = [];
+  const completedActivityGroups = completedActivityGroupsByTurn();
+  const groupedIndexes = new Set();
+  completedActivityGroups.forEach((entries) => {
+    entries.forEach((entry) => groupedIndexes.add(entry.index));
+  });
+  let activityGroup = [];
+  const flushActivityGroup = () => {
+    if (!activityGroup.length) {
+      return;
+    }
+    if (activityGroup.length === 1) {
+      const entry = activityGroup[0];
+      html.push(renderMessage(entry.message, entry.index));
+    } else {
+      html.push(renderActivityGroup(activityGroup));
+    }
+    activityGroup = [];
+  };
+
+  state.messages.forEach((message, index) => {
+    if (groupedIndexes.has(index)) {
+      flushActivityGroup();
+      const completedGroup = completedActivityGroups.get(index);
+      if (completedGroup) {
+        html.push(renderActivityGroup(completedGroup, { completedTurn: true }));
+      }
+      return;
+    }
+    if (isMergeableActivityMessage(message)) {
+      activityGroup.push({ message, index });
+      return;
+    }
+    flushActivityGroup();
+    html.push(renderMessage(message, index));
+  });
+  flushActivityGroup();
+  return html.join("");
+}
+
+function completedActivityGroupsByTurn() {
+  const turnGroups = new Map();
+  state.messages.forEach((message, index) => {
+    if (!message.turnId || message.turnId === state.currentTurnId || !isMergeableActivityMessage(message)) {
+      return;
+    }
+    if (!turnGroups.has(message.turnId)) {
+      turnGroups.set(message.turnId, []);
+    }
+    turnGroups.get(message.turnId).push({ message, index });
+  });
+
+  const groupsByFirstIndex = new Map();
+  turnGroups.forEach((entries) => {
+    if (entries.length) {
+      groupsByFirstIndex.set(entries[0].index, entries);
+    }
+  });
+  return groupsByFirstIndex;
+}
+
+function isMergeableActivityMessage(message) {
+  if (message.role === "reasoning") {
+    return true;
+  }
+  return message.role === "tool" && message.kind !== "error";
+}
+
+function renderActivityGroup(entries, { completedTurn = false } = {}) {
+  const liveEntry = entries.find((entry) => runtimeDescriptor(entry.message).live);
+  const runtimeEntry = liveEntry || [...entries].reverse().find((entry) => runtimeDescriptor(entry.message).label);
+  const runtime = runtimeEntry ? renderRuntimeLabel(runtimeEntry.message, runtimeEntry.index, "message-runtime activity-runtime") : "";
+  const isLive = Boolean(liveEntry);
+  const title = completedTurn ? t("activity.completedTitle") : t("activity.title");
+  const body = entries
+    .map(
+      (entry) => `
+        <section class="activity-group-item" data-message-index="${entry.index}">
+          ${renderMessageBody(entry.message)}
+          ${renderMessageRuntime(entry.message, entry.index)}
+        </section>
+      `,
+    )
+    .join("");
+  return `
+    <article class="message activity" data-activity-group-message>
+      <div class="bubble">
+        <details class="foldable-block activity-group ${isLive ? "is-live" : ""}">
+          <summary>
+            <span class="fold-label">
+              ${isLive ? '<span class="reasoning-pulse" aria-hidden="true"></span>' : ""}
+              ${escapeHtml(title)}
+            </span>
+            <span class="fold-meta">${escapeHtml(t("activity.items", { count: entries.length }))}</span>
+            ${runtime}
+          </summary>
+          <div class="activity-group-body">
+            ${body}
+          </div>
+        </details>
+      </div>
+    </article>
+  `;
 }
 
 function renderMessage(message, index) {
+  if (message.role === "compaction") {
+    return renderContextCompactionMessage(message, index);
+  }
   const role = message.role || "assistant";
   const kind = message.kind ? ` ${cssToken(message.kind)}` : "";
   const actions = role === "user" ? renderUserMessageActions(message, index) : "";
-  return `<article class="message ${cssToken(role)}${kind}" data-message-index="${index}"><div class="bubble">${renderMessageBody(message)}${actions}</div></article>`;
+  const runtime = renderMessageRuntime(message, index);
+  return `<article class="message ${cssToken(role)}${kind}" data-message-index="${index}"><div class="bubble">${renderMessageBody(message)}${actions}${runtime}</div></article>`;
+}
+
+function renderContextCompactionMessage(_message, index) {
+  return `
+    <article class="message compaction" data-message-index="${index}">
+      <div class="context-divider">
+        <span></span>
+        <div>
+          <strong>${escapeHtml(t("context.compacted"))}</strong>
+          <em>${escapeHtml(t("context.compactedDetail"))}</em>
+        </div>
+        <span></span>
+      </div>
+    </article>
+  `;
+}
+
+function renderMessageRuntime(message, index) {
+  return renderRuntimeLabel(message, index, "message-runtime");
+}
+
+function renderRuntimeLabel(message, index, className) {
+  const descriptor = runtimeDescriptor(message);
+  const classes = className.split(/\s+/).filter(Boolean);
+  if (!descriptor.label) {
+    classes.push("hidden");
+  }
+  if (descriptor.live) {
+    classes.push("is-live");
+  }
+  if (descriptor.waiting) {
+    classes.push("is-waiting");
+  }
+  return `<span class="${classes.join(" ")}" data-message-runtime-index="${index}">${escapeHtml(descriptor.label)}</span>`;
 }
 
 function renderMessageBody(message) {
+  if (message.role === "compaction") {
+    return "";
+  }
   if (message.role === "tool") {
     return renderFoldableBlock(message.title || t("code.output"), message.text || "", message.kind || "tool", false);
   }
@@ -1975,7 +2673,8 @@ function renderReasoningMessage(message) {
   const summary = normalizedTextArray(message.summary);
   const visibleSummary = summary.filter((part) => part.trim());
   const isInProgress = message.status !== "completed";
-  const open = message.open ?? isInProgress;
+  const open = Boolean(message.open);
+  const title = reasoningDisplayTitle(visibleSummary);
   const meta = isInProgress
     ? visibleSummary.length
       ? t("reasoning.inProgress")
@@ -1994,7 +2693,7 @@ function renderReasoningMessage(message) {
       <summary>
         <span class="fold-label">
           <span class="reasoning-pulse" aria-hidden="true"></span>
-          ${escapeHtml(t("reasoning.title"))}
+          ${escapeHtml(title)}
         </span>
         <span class="fold-meta">${escapeHtml(meta)}</span>
       </summary>
@@ -2003,6 +2702,19 @@ function renderReasoningMessage(message) {
       </div>
     </details>
   `;
+}
+
+function reasoningDisplayTitle(visibleSummary) {
+  const source = visibleSummary.find((part) => part.trim());
+  if (!source) {
+    return t("reasoning.title");
+  }
+  const firstLine = source
+    .split(/\r?\n/)
+    .map(cleanTitleText)
+    .find(Boolean);
+  const title = summarizeTitle(firstLine || source);
+  return title ? t("reasoning.ideaTitle", { title }) : t("reasoning.title");
 }
 
 function renderReasoningPart(text, isInProgress) {
@@ -2036,10 +2748,10 @@ function getMarkdownRenderer() {
   markdown.renderer.rules.fence = (tokens, idx) => {
     const token = tokens[idx];
     const language = (token.info || "").trim().split(/\s+/)[0];
-    return renderCodeBlock(language ? `${t("code.code")}: ${language}` : t("code.code"), token.content, false);
+    return renderCodeBlock(language ? `${t("code.code")}: ${language}` : t("code.code"), token.content, false, language);
   };
   markdown.renderer.rules.code_block = (tokens, idx) =>
-    renderCodeBlock(t("code.code"), tokens[idx].content, false);
+    renderCodeBlock(t("code.code"), tokens[idx].content, false, "");
 
   const defaultLinkOpen =
     markdown.renderer.rules.link_open ||
@@ -2076,7 +2788,7 @@ function renderTextWithFoldableCode(text) {
       parts.push(renderPlainText(text.slice(lastIndex, match.index)));
     }
     const language = match[1].trim();
-    parts.push(renderCodeBlock(language ? `${t("code.code")}: ${language}` : t("code.code"), match[2], false));
+    parts.push(renderCodeBlock(language ? `${t("code.code")}: ${language}` : t("code.code"), match[2], false, language));
     lastIndex = codeFence.lastIndex;
   }
 
@@ -2091,33 +2803,36 @@ function renderPlainText(text) {
   return text ? `<div class="plain-text">${escapeHtml(text)}</div>` : "";
 }
 
-function renderCodeBlock(title, body, open) {
+function renderCodeBlock(title, body, open, language = "") {
   const text = body || "";
   const lines = countBlockLines(text);
   const lineLabel = lines === 1 ? t("code.line") : t("code.lines", { count: lines });
   const copyButton = `<button type="button" class="copy-code" aria-label="${escapeHtml(t("code.copy"))}">${escapeHtml(t("code.copy"))}</button>`;
-  if (lines === 1) {
+  const shouldFold = shouldFoldCodeBlock(language, text, lines);
+  if (!shouldFold) {
     return `
-      <div class="code-block single-line">
+      <div class="code-block ${lines === 1 ? "single-line" : "expanded"}">
         <div class="code-block-header">
           <span class="fold-label">${escapeHtml(title)}</span>
           <span class="fold-meta">${lineLabel}</span>
           ${copyButton}
         </div>
-        <pre><code>${escapeHtml(stripTrailingNewline(text) || " ")}</code></pre>
+        <pre><code data-copy-source="true">${escapeHtml(stripTrailingNewline(text) || " ")}</code></pre>
       </div>
     `;
   }
 
+  const collapsed = !open;
   return `
-    <details class="foldable-block code" ${open ? "open" : ""}>
-      <summary>
+    <div class="foldable-block code has-preview ${collapsed ? "is-collapsed" : ""}" data-foldable-block>
+      <div class="fold-summary" data-fold-toggle role="button" tabindex="0" aria-expanded="${collapsed ? "false" : "true"}">
         <span class="fold-label">${escapeHtml(title)}</span>
         <span class="fold-meta">${lineLabel}</span>
         ${copyButton}
-      </summary>
-      <pre><code>${escapeHtml(text)}</code></pre>
-    </details>
+      </div>
+      <pre class="fold-preview" aria-hidden="${collapsed ? "false" : "true"}"><code>${escapeHtml(previewBlockText(text))}</code></pre>
+      <pre class="fold-full" aria-hidden="${collapsed ? "true" : "false"}"><code data-copy-source="true">${escapeHtml(text)}</code></pre>
+    </div>
   `;
 }
 
@@ -2125,19 +2840,63 @@ function renderFoldableBlock(title, body, kind, open) {
   const text = body || t("code.noOutput");
   const lines = countBlockLines(text);
   const lineLabel = lines === 1 ? t("code.line") : t("code.lines", { count: lines });
+  const kindClass = cssToken(kind);
+  if (lines <= CODE_PREVIEW_LINES) {
+    return `
+      <div class="code-block ${kindClass}">
+        <div class="code-block-header">
+          <span class="fold-label">${escapeHtml(title)}</span>
+          <span class="fold-meta">${lineLabel}</span>
+        </div>
+        <pre><code>${escapeHtml(stripTrailingNewline(text) || " ")}</code></pre>
+      </div>
+    `;
+  }
+
+  const collapsed = !open;
   return `
-    <details class="foldable-block ${cssToken(kind)}" ${open ? "open" : ""}>
-      <summary>
+    <div class="foldable-block ${kindClass} has-preview ${collapsed ? "is-collapsed" : ""}" data-foldable-block>
+      <div class="fold-summary" data-fold-toggle role="button" tabindex="0" aria-expanded="${collapsed ? "false" : "true"}">
         <span class="fold-label">${escapeHtml(title)}</span>
         <span class="fold-meta">${lineLabel}</span>
-      </summary>
-      <pre><code>${escapeHtml(text)}</code></pre>
-    </details>
+      </div>
+      <pre class="fold-preview" aria-hidden="${collapsed ? "false" : "true"}"><code>${escapeHtml(previewBlockText(text))}</code></pre>
+      <pre class="fold-full" aria-hidden="${collapsed ? "true" : "false"}"><code>${escapeHtml(text)}</code></pre>
+    </div>
   `;
 }
 
 function countBlockLines(text) {
   return stripTrailingNewline(text).split(/\r?\n/).length;
+}
+
+function shouldFoldCodeBlock(language, text, lines) {
+  return lines > CODE_PREVIEW_LINES && !isTextCodeBlock(language, text);
+}
+
+function isTextCodeBlock(language, text) {
+  const normalized = String(language || "").trim().toLowerCase();
+  if (TEXT_CODE_LANGUAGES.has(normalized)) {
+    return true;
+  }
+  if (normalized) {
+    return false;
+  }
+  const stripped = stripTrailingNewline(text).trim();
+  if (!stripped) {
+    return true;
+  }
+  const hasCodePunctuation = /[{}()[\];=<>]|=>|::|&&|\|\|/.test(stripped);
+  const codeLineStartPattern =
+    /^\s*(?:(?:import|export|const|let|var|function|class|def|if|for|while|return|#include|npm|git|cd|sudo|cargo|python|node|yarn|pnpm)\b|\$|>|#)/;
+  const hasCodeLineStart = stripped.split(/\r?\n/).some((line) => codeLineStartPattern.test(line));
+  const wordCount = (stripped.match(/[A-Za-z\u3400-\u9fff][\w\u3400-\u9fff'-]*/g) || []).length;
+  const hasSentenceText = /[.!?。！？](?:\s|$)|[\u3400-\u9fff]/.test(stripped) || (wordCount >= 12 && !hasCodeLineStart);
+  return hasSentenceText && !hasCodePunctuation;
+}
+
+function previewBlockText(text) {
+  return stripTrailingNewline(text).split(/\r?\n/).slice(0, CODE_PREVIEW_LINES).join("\n") || " ";
 }
 
 function stripTrailingNewline(text) {
@@ -2346,6 +3105,7 @@ function threadToMessages(thread) {
   const turns = thread.turns || [];
   for (let turnIndex = 0; turnIndex < turns.length; turnIndex += 1) {
     const turn = turns[turnIndex];
+    const turnMeta = turnRuntimeMeta(turn);
     for (const item of turn.items || []) {
       if (item.type === "userMessage") {
         messages.push({
@@ -2353,21 +3113,41 @@ function threadToMessages(thread) {
           text: item.content.map(inputToText).join("\n"),
           turnId: turn.id,
           turnIndex,
+          ...turnMeta,
         });
       } else if (item.type === "agentMessage") {
-        messages.push({ role: "assistant", text: item.text });
+        messages.push({ role: "assistant", text: item.text, itemId: item.id, turnId: turn.id, ...turnMeta });
       } else if (item.type === "reasoning") {
-        messages.push(reasoningMessageFromItem(item, "completed"));
+        messages.push(reasoningMessageFromItem({ ...item, turnId: turn.id, ...turnMeta }, "completed"));
       } else if (item.type === "commandExecution") {
         messages.push({
           role: "tool",
           kind: "command",
           title: item.command ? `$ ${item.command}` : t("code.command"),
           text: item.aggregatedOutput || item.status || "",
+          itemId: item.id,
+          turnId: turn.id,
+          itemDurationMs: item.durationMs,
+          ...turnMeta,
         });
       } else if (item.type === "fileChange") {
         const summary = item.changes.map((change) => `${change.kind}: ${change.path}`).join("\n");
-        messages.push({ role: "tool", kind: "file-change", title: t("code.fileChanges"), text: summary || item.status });
+        messages.push({
+          role: "tool",
+          kind: "file-change",
+          title: t("code.fileChanges"),
+          text: summary || item.status,
+          itemId: item.id,
+          turnId: turn.id,
+          ...turnMeta,
+        });
+      } else if (item.type === "contextCompaction") {
+        messages.push({
+          role: "compaction",
+          itemId: item.id,
+          turnId: turn.id,
+          ...turnMeta,
+        });
       }
     }
   }
@@ -2459,10 +3239,20 @@ async function regenerateFromEditedTurn() {
     state.currentThread = thread;
     state.draftThreadId = null;
     state.messages = threadToMessages(thread);
-    state.threadTitle = thread.name || thread.preview || state.threadTitle || "Codex";
+    state.threadTitle = threadDisplayTitle(thread) || state.threadTitle || "Codex";
     closeEditTurnDialog();
-    appendMessage("user", text, { turnIndex: nextUserTurnIndex() });
-    await sendTurnToCodex(text, turnOptionsFromUi());
+    const userMessage = appendMessage("user", text, { turnIndex: nextUserTurnIndex() });
+    try {
+      await sendTurnToCodex(text, turnOptionsFromUi());
+    } catch (error) {
+      if (!userMessage.turnId && userMessage.queuedAt) {
+        userMessage.durationMs = Date.now() - userMessage.queuedAt;
+        userMessage.completedAt = Date.now();
+        delete userMessage.queuedAt;
+        refreshRuntimeLabels();
+      }
+      throw error;
+    }
   } catch (error) {
     els.editTurnStatus.textContent = t("editTurn.failed", { error: error.message });
     appendMessage("tool", error.message, { title: t("code.error"), kind: "error" });
@@ -2486,10 +3276,16 @@ async function refreshState() {
   const next = await window.codexDesktop.getState();
   const uiConfig = next.uiConfig || state.uiConfig;
   const optimisticThreads = state.optimisticThreads;
+  const threadTokenUsageById = state.threadTokenUsageById;
+  const rateLimits = next.rateLimits || state.rateLimits;
+  const rateLimitsLoadedAt = next.rateLimits ? Date.now() : state.rateLimitsLoadedAt;
   Object.assign(state, next);
   state.serverReady = next.serverReady;
   state.uiConfig = uiConfig;
   state.optimisticThreads = optimisticThreads;
+  state.threadTokenUsageById = threadTokenUsageById;
+  state.rateLimits = rateLimits;
+  state.rateLimitsLoadedAt = rateLimitsLoadedAt;
   state.threads = mergeOptimisticThreads(next.threads);
   state.reviewOpen = Boolean(uiConfig.reviewOpen);
   state.selectedModel = uiConfig.selectedModel || "";
@@ -2497,11 +3293,104 @@ async function refreshState() {
   renderAll();
 }
 
+async function loadRateLimits({ force = false } = {}) {
+  const account = state.account?.account;
+  if (!account || account.type !== "chatgpt") {
+    state.rateLimits = null;
+    state.rateLimitsError = "";
+    state.rateLimitsLoading = false;
+    state.rateLimitsLoadedAt = 0;
+    renderSettings();
+    return;
+  }
+  if (state.rateLimitsLoading) {
+    return;
+  }
+  if (!force && state.rateLimits && Date.now() - state.rateLimitsLoadedAt < 60_000) {
+    return;
+  }
+  state.rateLimitsLoading = true;
+  state.rateLimitsError = "";
+  renderSettings();
+  try {
+    state.rateLimits = await window.codexDesktop.readRateLimits();
+    state.rateLimitsLoadedAt = Date.now();
+  } catch (error) {
+    state.rateLimitsError = error.message;
+  } finally {
+    state.rateLimitsLoading = false;
+    renderSettings();
+  }
+}
+
+function maybeLoadUsageData({ force = false } = {}) {
+  if (state.settingsTab !== "usage" || els.settingsModal.classList.contains("hidden")) {
+    return;
+  }
+  loadRateLimits({ force });
+}
+
 function appendMessage(role, text, extra = {}) {
-  const message = { role, text, ...extra };
+  const now = Date.now();
+  const message = { role, text, createdAt: now, updatedAt: now, ...extra };
+  if (role === "user" && !message.turnId && !message.queuedAt) {
+    message.queuedAt = now;
+  }
   state.messages.push(message);
   renderConversation();
   return message;
+}
+
+async function copyTextToClipboard(text, control = null) {
+  try {
+    await window.codexDesktop.copyText(text);
+  } catch (error) {
+    els.serverStatus.textContent = `${t("code.copyFailed")}: ${error.message}`;
+    throw error;
+  }
+  markCopied(control);
+}
+
+function markCopied(control) {
+  if (!control) {
+    els.serverStatus.textContent = t("code.copied");
+    return;
+  }
+  const previousText = control.textContent;
+  const previousLabel = control.getAttribute("aria-label");
+  const previousTitle = control.getAttribute("title");
+  control.classList.add("copied");
+  control.setAttribute("aria-label", t("code.copied"));
+  control.setAttribute("title", t("code.copied"));
+  if (control.classList.contains("copy-code")) {
+    control.textContent = t("code.copied");
+  }
+  setTimeout(() => {
+    if (!control.isConnected) {
+      return;
+    }
+    control.classList.remove("copied");
+    if (control.classList.contains("copy-code")) {
+      control.textContent = previousText;
+    }
+    if (previousLabel) {
+      control.setAttribute("aria-label", previousLabel);
+    }
+    if (previousTitle) {
+      control.setAttribute("title", previousTitle);
+    }
+  }, 1000);
+}
+
+function toggleFoldablePreview(foldToggle) {
+  const block = foldToggle.closest("[data-foldable-block]");
+  if (!block) {
+    return;
+  }
+  const collapsed = block.classList.toggle("is-collapsed");
+  foldToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  block.querySelector(".fold-preview")?.setAttribute("aria-hidden", collapsed ? "false" : "true");
+  block.querySelector(".fold-full")?.setAttribute("aria-hidden", collapsed ? "true" : "false");
 }
 
 function reasoningMessageFromItem(item, status = "inProgress") {
@@ -2509,10 +3398,13 @@ function reasoningMessageFromItem(item, status = "inProgress") {
     role: "reasoning",
     itemId: item.id,
     turnId: item.turnId || null,
+    turnStartedAt: item.turnStartedAt || null,
+    turnCompletedAt: item.turnCompletedAt || null,
+    turnDurationMs: item.turnDurationMs ?? null,
     summary: normalizedTextArray(item.summary),
     content: normalizedTextArray(item.content),
     status,
-    open: status !== "completed",
+    open: false,
     userToggled: false,
     synthetic: Boolean(item.synthetic),
   };
@@ -2533,6 +3425,7 @@ function startTurnReasoningIndicator(turnId) {
       summary: [],
       content: [],
       synthetic: true,
+      turnStartedAt: state.currentTurnStartedAt,
     }),
   );
 }
@@ -2600,7 +3493,12 @@ function ensureReasoningMessage(itemId, item = null, turnId = null) {
   }
   message.synthetic = false;
   message.status = message.status || "inProgress";
-  message.open ??= message.status !== "completed";
+  message.open ??= false;
+  if (message.turnId) {
+    applyTurnRuntime(message, {
+      turnStartedAt: message.turnStartedAt || state.currentTurnStartedAt,
+    });
+  }
   return message;
 }
 
@@ -2631,8 +3529,25 @@ async function flushQueuedFollowUp() {
   try {
     await sendTurnToCodex(next.text, next.options);
   } catch (error) {
+    if (next.message && !next.message.turnId && next.message.queuedAt) {
+      next.message.durationMs = Date.now() - next.message.queuedAt;
+      next.message.completedAt = Date.now();
+      delete next.message.queuedAt;
+      refreshRuntimeLabels();
+    }
     appendMessage("tool", error.message, { title: t("code.error"), kind: "error" });
   }
+}
+
+function appendContextCompactionMarker(turnId, itemId = null) {
+  if (turnId && state.messages.some((message) => message.role === "compaction" && message.turnId === turnId)) {
+    return;
+  }
+  appendMessage("compaction", "", {
+    itemId: itemId || (turnId ? `compaction:${turnId}` : `compaction:${Date.now()}`),
+    turnId,
+    turnStartedAt: state.currentTurnStartedAt,
+  });
 }
 
 async function submitPrompt(followUpOverride = null) {
@@ -2644,25 +3559,42 @@ async function submitPrompt(followUpOverride = null) {
   if (state.currentThread?.id === state.draftThreadId) {
     state.draftThreadId = null;
   }
-  appendMessage("user", text, { turnIndex: nextUserTurnIndex() });
+  const userMessage = appendMessage("user", text, { turnIndex: nextUserTurnIndex() });
+  if (state.currentThread?.id && !state.currentThread.name) {
+    const title = summarizeTitle(text);
+    state.currentThread = { ...state.currentThread, preview: title, displayTitle: title };
+    state.threadTitle = title;
+    upsertThread(state.currentThread, { optimistic: true });
+    renderSidebar();
+    renderHeader();
+  }
 
   const activeTurnId = state.currentTurnId;
   const behavior = followUpOverride || uiConfigValue("followUpBehavior", "queue");
   const options = turnOptionsFromUi();
 
   if (activeTurnId && behavior === "queue") {
-    state.queuedFollowUps.push({ text, options });
+    state.queuedFollowUps.push({ text, options, message: userMessage });
     return;
   }
 
   if (activeTurnId && behavior === "steer") {
+    userMessage.turnId = activeTurnId;
+    applyTurnRuntime(userMessage, { turnStartedAt: state.currentTurnStartedAt });
     options.followUpBehavior = "steer";
     options.activeTurnId = activeTurnId;
+    refreshRuntimeLabels();
   }
 
   try {
     await sendTurnToCodex(text, options);
   } catch (error) {
+    if (!userMessage.turnId && userMessage.queuedAt) {
+      userMessage.durationMs = Date.now() - userMessage.queuedAt;
+      userMessage.completedAt = Date.now();
+      delete userMessage.queuedAt;
+      refreshRuntimeLabels();
+    }
     appendMessage("tool", error.message, { title: t("code.error"), kind: "error" });
   }
 }
@@ -2686,16 +3618,21 @@ window.codexDesktop.onServerLog((payload) => {
 window.codexDesktop.onEvent(({ method, params }) => {
   if (method === "thread/started") {
     state.currentThread = params.thread;
-    state.threadTitle = params.thread.name || params.thread.preview || "New chat";
+    state.threadTitle = threadDisplayTitle(params.thread) || t("nav.newChat");
     upsertThread(params.thread, { optimistic: true });
     renderSidebar();
     renderHeader();
+    renderSettings();
   } else if (method === "turn/started") {
     state.currentTurnId = params.turn.id;
+    const meta = turnRuntimeMeta(params.turn, { fallbackStartedAt: Date.now() });
+    state.currentTurnStartedAt = meta.turnStartedAt;
     const pendingUserMessage = [...state.messages].reverse().find((message) => message.role === "user" && !message.turnId);
     if (pendingUserMessage) {
       pendingUserMessage.turnId = params.turn.id;
+      applyTurnRuntime(pendingUserMessage, meta);
     }
+    applyTurnRuntimeToMessages(params.turn.id, meta);
     startTurnReasoningIndicator(params.turn.id);
     scheduleConversationRender();
   } else if (method === "item/started") {
@@ -2706,8 +3643,16 @@ window.codexDesktop.onEvent(({ method, params }) => {
   } else if (method === "item/agentMessage/delta") {
     let message = findStreamingMessage(params.itemId);
     if (!message) {
-      message = appendMessage("assistant", "", { itemId: params.itemId });
+      message = appendMessage("assistant", "", {
+        itemId: params.itemId,
+        turnId: params.turnId,
+        turnStartedAt: state.currentTurnStartedAt,
+      });
     }
+    if (params.turnId && !message.turnId) {
+      message.turnId = params.turnId;
+    }
+    applyTurnRuntime(message, { turnStartedAt: message.turnStartedAt || state.currentTurnStartedAt });
     message.text += params.delta;
     scheduleConversationRender();
   } else if (method === "item/reasoning/summaryPartAdded") {
@@ -2729,9 +3674,25 @@ window.codexDesktop.onEvent(({ method, params }) => {
   } else if (method === "turn/diff/updated") {
     state.git.diff = params.diff;
     renderGit();
+  } else if (method === "thread/tokenUsage/updated") {
+    if (params.threadId && params.tokenUsage) {
+      state.threadTokenUsageById[params.threadId] = params.tokenUsage;
+    }
+    renderSettings();
+    renderModelControls();
+  } else if (method === "thread/compacted") {
+    if (!params.threadId || params.threadId === state.currentThread?.id) {
+      appendContextCompactionMarker(params.turnId);
+    }
   } else if (method === "turn/completed") {
-    completeTurnReasoningIndicators(params.turn?.id || state.currentTurnId);
+    const turnId = params.turn?.id || state.currentTurnId;
+    const completedMeta = turnRuntimeMeta(params.turn, {
+      fallbackStartedAt: state.currentTurnStartedAt,
+    });
+    applyTurnRuntimeToMessages(turnId, completedMeta);
+    completeTurnReasoningIndicators(turnId);
     state.currentTurnId = null;
+    state.currentTurnStartedAt = null;
     renderConversation();
     window.codexDesktop.refreshGit().then((git) => {
       state.git = git;
@@ -2743,7 +3704,18 @@ window.codexDesktop.onEvent(({ method, params }) => {
     els.browserLoginStatus.textContent = params.success ? t("auth.loginComplete") : params.error || t("auth.loginFailed");
     refreshState();
   } else if (method === "account/updated") {
-    refreshState();
+    state.rateLimits = null;
+    state.rateLimitsLoadedAt = 0;
+    refreshState().then(() => maybeLoadUsageData({ force: true }));
+  } else if (method === "account/rateLimits/updated") {
+    state.rateLimits = { rateLimits: params.rateLimits, rateLimitsByLimitId: null };
+    state.rateLimitsLoadedAt = Date.now();
+    state.rateLimitsError = "";
+    renderSettings();
+  } else if (method === "thread/name/updated") {
+    applyThreadTitle(params.threadId, params.threadName);
+    renderSidebar();
+    renderHeader();
   } else if (method === "thread/archived") {
     state.threads = state.threads.filter((thread) => thread.id !== params.threadId);
     state.optimisticThreads = state.optimisticThreads.filter((thread) => thread.id !== params.threadId);
@@ -2756,8 +3728,16 @@ function handleCompletedItem(item, turnId = null) {
     const message = findStreamingMessage(item.id);
     if (message) {
       message.text = item.text;
+      if (turnId && !message.turnId) {
+        message.turnId = turnId;
+      }
+      applyTurnRuntime(message, { turnStartedAt: message.turnStartedAt || state.currentTurnStartedAt });
     } else {
-      appendMessage("assistant", item.text, { itemId: item.id });
+      appendMessage("assistant", item.text, {
+        itemId: item.id,
+        turnId,
+        turnStartedAt: state.currentTurnStartedAt,
+      });
     }
   } else if (item.type === "reasoning") {
     const message = ensureReasoningMessage(item.id, item, turnId);
@@ -2769,10 +3749,22 @@ function handleCompletedItem(item, turnId = null) {
     appendMessage("tool", item.aggregatedOutput || item.status || "", {
       kind: "command",
       title: item.command ? `$ ${item.command}` : t("code.command"),
+      itemId: item.id,
+      turnId,
+      turnStartedAt: state.currentTurnStartedAt,
+      itemDurationMs: item.durationMs,
     });
   } else if (item.type === "fileChange") {
     const summary = item.changes.map((change) => `${change.kind}: ${change.path}`).join("\n");
-    appendMessage("tool", summary || item.status, { kind: "file-change", title: t("code.fileChanges") });
+    appendMessage("tool", summary || item.status, {
+      kind: "file-change",
+      title: t("code.fileChanges"),
+      itemId: item.id,
+      turnId,
+      turnStartedAt: state.currentTurnStartedAt,
+    });
+  } else if (item.type === "contextCompaction") {
+    appendContextCompactionMarker(turnId, item.id);
   }
   renderConversation();
 }
@@ -2983,6 +3975,7 @@ document.getElementById("settingsButton").addEventListener("click", () => {
   if (!state.configRead && !state.configLoading) {
     loadSettingsConfig();
   }
+  maybeLoadUsageData();
 });
 document.getElementById("closeSettings").addEventListener("click", () => {
   els.settingsModal.classList.add("hidden");
@@ -3014,12 +4007,17 @@ els.settingsOpenAuth?.addEventListener("click", () => {
 els.settingsLogout?.addEventListener("click", async () => {
   try {
     await window.codexDesktop.logout();
+    state.rateLimits = null;
+    state.rateLimitsLoadedAt = 0;
     await refreshState();
   } catch (error) {
     if (els.settingsAccountDetail) {
       els.settingsAccountDetail.textContent = error.message;
     }
   }
+});
+els.settingsRefreshUsage?.addEventListener("click", () => {
+  loadRateLimits({ force: true });
 });
 document.getElementById("settingsChooseWorkspace")?.addEventListener("click", chooseWorkspace);
 document.querySelectorAll("[data-settings-tab]").forEach((tab) => {
@@ -3029,6 +4027,7 @@ document.querySelectorAll("[data-settings-tab]").forEach((tab) => {
     if ((state.settingsTab === "configuration" || state.settingsTab === "mcp") && !state.configRead) {
       loadSettingsConfig();
     }
+    maybeLoadUsageData();
   });
 });
 els.settingsLanguage?.addEventListener("change", () => {
@@ -3147,15 +4146,15 @@ els.conversation.addEventListener("click", async (event) => {
     event.preventDefault();
     event.stopPropagation();
     const block = copyButton.closest(".foldable-block, .code-block");
-    const text = block?.querySelector("code")?.textContent || "";
-    window.codexDesktop.copyText(text);
-    const previous = copyButton.textContent;
-    copyButton.textContent = t("code.copied");
-    setTimeout(() => {
-      if (copyButton.isConnected) {
-        copyButton.textContent = previous;
-      }
-    }, 1000);
+    const text = block?.querySelector("[data-copy-source]")?.textContent || block?.querySelector("code")?.textContent || "";
+    await copyTextToClipboard(text, copyButton);
+    return;
+  }
+
+  const foldToggle = event.target.closest("[data-fold-toggle]");
+  if (foldToggle) {
+    event.preventDefault();
+    toggleFoldablePreview(foldToggle);
     return;
   }
 
@@ -3169,7 +4168,7 @@ els.conversation.addEventListener("click", async (event) => {
       return;
     }
     if (userAction.dataset.userAction === "copy") {
-      window.codexDesktop.copyText(message.text || "");
+      await copyTextToClipboard(message.text || "", userAction);
       return;
     }
     if (userAction.dataset.userAction === "edit") {
@@ -3192,6 +4191,17 @@ els.conversation.addEventListener("click", async (event) => {
     return;
   }
   window.codexDesktop.openExternal(href);
+});
+els.conversation.addEventListener("keydown", (event) => {
+  if (event.target.closest(".copy-code")) {
+    return;
+  }
+  const foldToggle = event.target.closest("[data-fold-toggle]");
+  if (!foldToggle || (event.key !== "Enter" && event.key !== " ")) {
+    return;
+  }
+  event.preventDefault();
+  toggleFoldablePreview(foldToggle);
 });
 els.conversation.addEventListener(
   "toggle",

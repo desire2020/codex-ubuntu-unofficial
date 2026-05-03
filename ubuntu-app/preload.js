@@ -1,4 +1,4 @@
-const { clipboard, contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("codexDesktop", {
   getState: () => ipcRenderer.invoke("app:get-state"),
@@ -12,11 +12,12 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   login: (payload) => ipcRenderer.invoke("account:login", payload),
   cancelLogin: (loginId) => ipcRenderer.invoke("account:cancel-login", loginId),
   logout: () => ipcRenderer.invoke("account:logout"),
+  readRateLimits: () => ipcRenderer.invoke("account:rate-limits"),
   readConfig: () => ipcRenderer.invoke("config:read"),
   writeConfigValue: (payload) => ipcRenderer.invoke("config:value-write", payload),
   openConfig: () => ipcRenderer.invoke("config:open-user"),
   updateUiConfig: (patch) => ipcRenderer.invoke("ui-config:update", patch),
-  copyText: (text) => clipboard.writeText(String(text ?? "")),
+  copyText: (text) => ipcRenderer.invoke("clipboard:write-text", text),
   readFileLink: (href) => ipcRenderer.invoke("file:read-link", href),
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
   openLicenses: () => ipcRenderer.invoke("licenses:open"),
