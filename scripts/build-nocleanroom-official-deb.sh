@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 package_name="codex-desktop-ubuntu"
-package_version="26.429.30905+ubuntu.12"
+package_version="26.513.31313+ubuntu.1"
 arch="amd64"
 build_root="${repo_root}/dist/deb/${package_name}_${package_version}_${arch}"
 install_root="${build_root}/opt/${package_name}"
@@ -40,9 +40,24 @@ if command -v ldd >/dev/null 2>&1; then
   conda_prefix="${CONDA_PREFIX:-}"
   mkdir -p "${conda_lib_dir}"
   if [[ -n "${conda_prefix}" ]]; then
-    while IFS= read -r lib; do
-      cp -n "${lib}" "${conda_lib_dir}/" || true
-    done < <(ldd "${resources_dir}/codex" 2>/dev/null | awk -v prefix="${conda_prefix}/lib/" 'index($3, prefix) == 1 { print $3 }')
+    linked_files=(
+      "${resources_dir}/codex"
+      "${conda_prefix}/bin/node"
+      "${resources_dir}/node"
+      "${resources_dir}/rg"
+      "${resources_dir}/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+      "${resources_dir}/app.asar.unpacked/node_modules/node-pty/build/Release/pty.node"
+      "${resources_dir}/app.asar.unpacked/node_modules/node-pty/build/Release/spawn-helper"
+    )
+    for linked_file in "${linked_files[@]}"; do
+      [[ -e "${linked_file}" ]] || continue
+      while IFS= read -r lib; do
+        real_lib="$(readlink -f "${lib}" 2>/dev/null || true)"
+        [[ "${real_lib}" == "${conda_prefix}/lib/"* ]] || continue
+        cp -a --update=none "${lib}" "${conda_lib_dir}/" || true
+        cp -a --update=none "${real_lib}" "${conda_lib_dir}/" || true
+      done < <(ldd "${linked_file}" 2>/dev/null | awk '{ print $3 }')
+    done
   fi
   if ! find "${conda_lib_dir}" -type f -print -quit | grep -q .; then
     rmdir "${conda_lib_dir}"

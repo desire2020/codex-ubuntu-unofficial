@@ -1,19 +1,20 @@
 {
   "name": "codex-desktop-official-linux-packager",
   "private": true,
-  "version": "26.429.30905-ubuntu.12",
+  "version": "26.513.31313-ubuntu.1",
   "description": "Linux packaging harness for the official Codex Electron desktop bundle.",
   "scripts": {
     "build-spawn-helper": "${CXX:-x86_64-conda-linux-gnu-g++} -Wall -O2 -D_FORTIFY_SOURCE=2 node_modules/node-pty/src/unix/spawn-helper.cc -o node_modules/node-pty/build/Release/spawn-helper",
     "check": "node --check scripts/stage-official-codex-app.js",
-    "install-electron": "node node_modules/electron/install.js",
-    "rebuild-native": "CC=${CC:-x86_64-conda-linux-gnu-gcc} CXX=${CXX:-x86_64-conda-linux-gnu-g++} electron-rebuild -v 41.2.0 -w better-sqlite3 -w node-pty && npm run build-spawn-helper",
+    "install-electron": "NODE_OPTIONS=\"--experimental-require-module ${NODE_OPTIONS:-}\" node node_modules/electron/install.js",
+    "patch-native-sources": "node scripts/patch-native-sources.js",
+    "rebuild-native": "npm run patch-native-sources && NODE_OPTIONS=\"--experimental-require-module ${NODE_OPTIONS:-}\" CC=${CC:-x86_64-conda-linux-gnu-gcc} CXX=${CXX:-x86_64-conda-linux-gnu-g++} electron-rebuild -v 42.0.1 -w better-sqlite3 -w node-pty && npm run build-spawn-helper",
     "stage": "node scripts/stage-official-codex-app.js",
     "start": "scripts/run-official-linux.sh"
   },
   "dependencies": {
-    "better-sqlite3": "12.8.0",
-    "electron": "41.2.0",
+    "better-sqlite3": "12.10.0",
+    "electron": "42.0.1",
     "node-pty": "1.1.0"
   },
   "devDependencies": {
