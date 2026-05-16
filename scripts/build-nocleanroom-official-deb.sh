@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 package_name="codex-desktop-ubuntu"
-package_version="26.513.31313+ubuntu.1"
+package_version="26.513.31313+ubuntu.9"
 arch="amd64"
 build_root="${repo_root}/dist/deb/${package_name}_${package_version}_${arch}"
 install_root="${build_root}/opt/${package_name}"
